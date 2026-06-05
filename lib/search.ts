@@ -12,15 +12,3 @@ export function normalizeText(value: string) {
 
 export function searchLyrics(tracks: Track[], query: string, exact = false) {
   const q = normalizeText(query.replace(/^"|"$/g, ''));
-  if (!q) return tracks;
-
-  return tracks.filter((track) => {
-    const haystack = normalizeText(`${track.title} ${track.lyrics}`);
-    if (exact) return haystack.includes(q);
-    return q.split(' ').every((term) => haystack.includes(term));
-  });
-}
-
-export function snippetFor(track: Track, query: string) {
-  const cleanQuery = query.replace(/^"|"$/g, '').trim();
-  const
