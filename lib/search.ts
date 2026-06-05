@@ -20,3 +20,7 @@ export function searchLyrics(tracks: Track[], query: string, exact = false) {
     return q.split(' ').every((term) => haystack.includes(term));
   });
 }
+
+export function snippetFor(track: Track, query: string) {
+  const cleanQuery = query.replace(/^"|"$/g, '').trim();
+  const
