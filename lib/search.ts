@@ -11,5 +11,7 @@ function stripQuotes(value: string) {
 export function searchLyrics(tracks: Track[], query: string, exact = false) {
   const q = normalizeText(stripQuotes(query));
   if (!q) return tracks;
-  return tracks.filter((track) => {
-    const haystack = normalizeText(track
+  return tracks.filter((item) => {
+    const haystack = normalizeText(item.title + ' ' + item.lyrics);
+    if (exact) return haystack.includes(q);
+    return q.split(' ').every((term) =>
