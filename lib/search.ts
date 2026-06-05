@@ -1,17 +1,17 @@
 import type { Track } from './types';
 
-export function normalizeText(value: string) {
-  return value.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function stripQuotes(value: string) {
-  return value.trim().replace(/^"/, '').replace(/"$/, '');
-}
+const clean = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 export function searchLyrics(tracks: Track[], query: string, exact = false) {
-  const q = normalizeText(stripQuotes(query));
+  const q = clean(query.replace(/^"/, '').replace(/"$/, ''));
   if (!q) return tracks;
-  return tracks.filter((item) => {
-    const haystack = normalizeText(item.title + ' ' + item.lyrics);
-    if (exact) return haystack.includes(q);
-    return q.split(' ').every((term) =>
+  return tracks.filter((track) => clean(track.title + ' ' + track.lyrics).includes(q));
+}
+
+export function snippetFor(track: Track, query: string) {
+  const text = track.lyrics.replace(/\n/g, ' ');
+  return text.slice(0, 180);
+}
+
+export function highlightSnippet(snippet: string, query: string) {
+  return
