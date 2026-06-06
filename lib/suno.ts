@@ -1,5 +1,4 @@
 import type { Track } from './types';
-import { sampleTracks } from './sample-data';
 
 function collectStringPayloads(value: unknown, out: string[] = []) {
   if (typeof value === 'string') {
@@ -105,9 +104,9 @@ function collectTracksFromAnyJson(value: unknown, out: Track[] = []): Track[] {
 
 export async function fetchSunoPlaylist(playlistUrl: string) {
   const result = {
-    mode: 'fallback-demo' as 'public-parse' | 'fallback-demo' | 'failed',
-    message: 'Using demo playlist because public Suno metadata was not detected.',
-    tracks: sampleTracks
+    mode: 'failed' as 'public-parse' | 'failed',
+    message: 'Public Suno metadata was not detected. Existing homepage data was left unchanged.',
+    tracks: [] as Track[]
   };
   if (!playlistUrl || !/^https?:\/\//.test(playlistUrl)) return result;
   try {
@@ -118,7 +117,7 @@ export async function fetchSunoPlaylist(playlistUrl: string) {
       },
       next: { revalidate: 60 }
     });
-    if (!response.ok) return { ...result, message: `Suno fetch returned HTTP ${response.status}; using demo fallback.` };
+    if (!response.ok) return { ...result, message: `Suno fetch returned HTTP ${response.status}. Existing homepage data was left unchanged.` };
     const html = await response.text();
     const jsons = findJsonObjects(html);
     const tracks = jsons.flatMap((json) => collectTracksFromAnyJson(json)).filter((t) => t.title);

@@ -238,10 +238,19 @@ export function AdminCommand() {
   async function fetchPlaylist() {
     setLoading(true);
     try {
-      const response = await fetch('/api/fetch-suno', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playlistUrl: url }) });
+      const response = await fetch('/api/fetch-suno', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          playlistUrl: url,
+          themePrompt: 'fearlessness, love, wisdom, patience, collaboration, competition, luminous cinematic resilience',
+          save: true
+        })
+      });
       const json = await response.json();
-      setResult(null);
+      setResult(json);
       setRawResult(JSON.stringify(json, null, 2));
+      await refreshStatus();
     } finally {
       setLoading(false);
     }
@@ -301,7 +310,7 @@ export function AdminCommand() {
             <input value={url} onChange={(e) => setUrl(e.target.value)} />
             <button className="gold-button" onClick={fetchPlaylist} disabled={loading}>Fetch</button>
           </div>
-          <p className="helper">Fetch attempts public metadata first, then falls back to demo data. No credentials or private account scraping.</p>
+          <p className="helper">Fetch reads the public Suno playlist and saves the parsed productions to the RollinDD homepage. If Suno parsing fails, existing homepage data is left unchanged.</p>
           <div className="status-grid">
             <div className="status-box">Cover Art<br/><strong>check</strong></div>
             <div className="status-box">Video<br/><strong>if available</strong></div>

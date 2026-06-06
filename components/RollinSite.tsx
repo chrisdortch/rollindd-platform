@@ -58,6 +58,15 @@ function PlayIcon() {
   );
 }
 
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 5h3v14H8z" />
+      <path d="M13 5h3v14h-3z" />
+    </svg>
+  );
+}
+
 function InfoIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -94,8 +103,9 @@ export function RollinSite({ site }: { site: Site }) {
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [query, setQuery] = useState('');
-  const [selectedTrack, setSelectedTrack] = useState<Track | undefined>(sortedTracks[0]);
-  const [autoPlayRequested, setAutoPlayRequested] = useState(false);
+  const [selectedTrack, setSelectedTrack] = useState<Track | undefined>();
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playIntentTrackId, setPlayIntentTrackId] = useState<string | null>(null);
   const [infoTrackId, setInfoTrackId] = useState<string | null>(null);
 
   const exact = isExactSearch(query);
@@ -104,14 +114,9 @@ export function RollinSite({ site }: { site: Site }) {
     [exact, query, sortedTracks]
   );
   const downloadableCount = sortedTracks.filter((track) => track.downloadable && track.mp3Url).length;
+  const playableCount = sortedTracks.filter((track) => track.audioUrl).length;
   const selectedIndex = selectedTrack ? sortedTracks.findIndex((track) => track.id === selectedTrack.id) : -1;
   const infoTrack = sortedTracks.find((track) => track.id === infoTrackId);
-
-  useEffect(() => {
-    if (!autoPlayRequested || !audioRef.current) return;
-    audioRef.current.play().catch(() => undefined);
-    setAutoPlayRequested(false);
-  }, [autoPlayRequested, selectedTrack]);
 
   useEffect(() => {
     if (!infoTrackId) return;
@@ -123,8 +128,29 @@ export function RollinSite({ site }: { site: Site }) {
   }, [infoTrackId]);
 
   function playTrack(track: Track) {
+    if (!track.audioUrl) return;
     setSelectedTrack(track);
-    setAutoPlayRequested(true);
+    setPlayIntentTrackId(track.id);
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (audio.src !== track.audioUrl) audio.src = track.audioUrl;
+    audio.play().catch(() => undefined);
+  }
+
+  function pauseTrack() {
+    audioRef.current?.pause();
+    setIsPlaying(false);
+    setPlayIntentTrackId(null);
+  }
+
+  function toggleTrack(track: Track) {
+    if (selectedTrack?.id === track.id && (isPlaying || playIntentTrackId === track.id)) {
+      pauseTrack();
+      return;
+    }
+
+    playTrack(track);
   }
 
   function playAll() {
@@ -134,9 +160,14 @@ export function RollinSite({ site }: { site: Site }) {
 
   function playNext() {
     if (!sortedTracks.length) return;
-    const nextIndex = selectedIndex >= 0 ? selectedIndex + 1 : 0;
-    const nextTrack = sortedTracks[nextIndex % sortedTracks.length];
-    playTrack(nextTrack);
+    const startIndex = selectedIndex >= 0 ? selectedIndex + 1 : 0;
+    for (let offset = 0; offset < sortedTracks.length; offset += 1) {
+      const nextTrack = sortedTracks[(startIndex + offset) % sortedTracks.length];
+      if (nextTrack.audioUrl) {
+        playTrack(nextTrack);
+        return;
+      }
+    }
   }
 
   return (
@@ -151,17 +182,17 @@ export function RollinSite({ site }: { site: Site }) {
       <header className="site-toolbar">
         <div className="toolbar-main">
           <Link className="brand-lockup" href="/">
-            <Image className="brand-eye" src="/brand/rollindd-eye.svg" alt="" width={42} height={42} priority />
+            <Image className="brand-eye" src="/brand/rollindd-logo.jpg" alt="" width={56} height={56} priority />
             <span className="wordmark">RollinD<span>D</span></span>
           </Link>
           <nav className="nav-pills" aria-label="Site navigation">
-            <button className="pill action-pill" onClick={playAll} disabled={!downloadableCount} type="button">
+            <button className="pill action-pill" onClick={playAll} disabled={!playableCount} type="button">
               <PlayIcon /> Play All
             </button>
-            <Link className="pill" href="/admin">Admin</Link>
             <a className={downloadableCount ? 'download-button nav-download' : 'download-button nav-download disabled'} href={downloadableCount ? downloadAllHref(site) : undefined}>
               <DownloadIcon /> Download All
             </a>
+            <Link className="pill" href="/admin">Admin</Link>
             <a className="admin-chip" href={site.sunoPlaylistUrl || '#'}>Suno</a>
           </nav>
         </div>
@@ -185,13 +216,28 @@ export function RollinSite({ site }: { site: Site }) {
 
         <div className="production-grid">
           {tracks.map((track, index) => {
-            const selected = selectedTrack?.id === track.id;
+            const trackPlaying = selectedTrack?.id === track.id && (isPlaying || playIntentTrackId === track.id);
+            const buttonLabel = `${trackPlaying ? 'Pause' : 'Play'} ${track.title}`;
             return (
-              <article className={selected ? 'production-card playing' : 'production-card'} key={track.id}>
-                <div className="production-thumb" style={{ backgroundImage: `url(${track.coverImageUrl})` }}>
+              <article className={trackPlaying ? 'production-card playing' : 'production-card'} key={track.id}>
+                <div className={track.videoUrl ? 'production-thumb has-video' : 'production-thumb'}>
+                  {track.videoUrl ? (
+                    <video
+                      className="production-media"
+                      src={track.videoUrl}
+                      poster={track.coverImageUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                    />
+                  ) : (
+                    // Plain img preserves the remote artwork's natural aspect ratio.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img className="production-media" src={track.coverImageUrl} alt="" loading={index < 3 ? 'eager' : 'lazy'} />
+                  )}
                   <div className="thumb-actions">
-                    <button className="icon-button" onClick={() => playTrack(track)} aria-label={`Play ${track.title}`} type="button">
-                      <PlayIcon />
+                    <button className="icon-button" onClick={() => toggleTrack(track)} aria-label={buttonLabel} type="button" disabled={!track.audioUrl}>
+                      {trackPlaying ? <PauseIcon /> : <PlayIcon />}
                     </button>
                     <button className="icon-button" onClick={() => setInfoTrackId(track.id)} aria-label={`Open words for ${track.title}`} type="button">
                       <InfoIcon />
@@ -202,27 +248,17 @@ export function RollinSite({ site }: { site: Site }) {
                       </a>
                     )}
                   </div>
-                </div>
-                <div className="production-caption">
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  <strong>{track.title}</strong>
-                  <em>{formatDuration(track.durationSeconds)}</em>
+                  <div className="production-caption">
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <strong>{track.title}</strong>
+                    <em>{formatDuration(track.durationSeconds)}</em>
+                  </div>
                 </div>
               </article>
             );
           })}
           {tracks.length === 0 && <p className="empty-state">No matching words found.</p>}
         </div>
-      </section>
-
-      <section className="download-section">
-        <div>
-          <div className="kicker">Download</div>
-          <h2>All MP3s</h2>
-        </div>
-        <a className={downloadableCount ? 'download-button' : 'download-button disabled'} href={downloadableCount ? downloadAllHref(site) : undefined}>
-          <DownloadIcon /> Download All
-        </a>
       </section>
 
       <section className="now-playing-dock" aria-label="Player">
@@ -235,7 +271,16 @@ export function RollinSite({ site }: { site: Site }) {
           src={selectedTrack?.audioUrl}
           controls
           preload="metadata"
-          onEnded={playNext}
+          onEnded={() => {
+            setPlayIntentTrackId(null);
+            playNext();
+          }}
+          onPause={() => setIsPlaying(false)}
+          onPlay={() => setIsPlaying(true)}
+          onError={() => {
+            setIsPlaying(false);
+            setPlayIntentTrackId(null);
+          }}
         />
       </section>
 
@@ -266,8 +311,9 @@ export function RollinSite({ site }: { site: Site }) {
               </button>
             </div>
             <div className="words-actions">
-              <button className="pill action-pill" onClick={() => playTrack(infoTrack)} type="button">
-                <PlayIcon /> Play
+              <button className="pill action-pill" onClick={() => toggleTrack(infoTrack)} type="button" disabled={!infoTrack.audioUrl}>
+                {selectedTrack?.id === infoTrack.id && (isPlaying || playIntentTrackId === infoTrack.id) ? <PauseIcon /> : <PlayIcon />}
+                {selectedTrack?.id === infoTrack.id && (isPlaying || playIntentTrackId === infoTrack.id) ? 'Pause' : 'Play'}
               </button>
               {infoTrack.mp3Url && (
                 <a className="download-button compact" href={downloadTrackHref(site, infoTrack)}>

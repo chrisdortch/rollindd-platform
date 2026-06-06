@@ -1,5 +1,5 @@
 import type { CentralCommandResult, Site } from './types';
-import { sampleSite, sampleTracks } from './sample-data';
+import { sampleSite } from './sample-data';
 import { fetchSunoPlaylist } from './suno';
 import { analyzeLyrics, generateThemeFromLyrics } from './theme';
 import { isDatabaseConfigured, recordCommandRun, saveSiteWithTracks } from './persistence';
@@ -72,7 +72,24 @@ export async function runCentralCommand(raw: string): Promise<CentralCommandResu
   const siteTitle = values.site_name || values.site || sampleSite.title;
   const slug = slugify(siteTitle || domain || sampleSite.slug);
   const fetched = await fetchSunoPlaylist(playlistUrl);
-  const tracks = fetched.tracks.length ? fetched.tracks : sampleTracks;
+  const tracks = fetched.tracks;
+
+  if (!tracks.length) {
+    const riskNotes = [
+      fetched.message,
+      'No demo playlist data was saved, so the existing homepage remains unchanged.',
+      'Try the Suno playlist URL again, then run Central Command only after Fetch reports parsed tracks.'
+    ];
+
+    return {
+      status: 'needs_user_action',
+      persistence: 'demo-fallback',
+      parsed: { ...parsed, sunoFetchMode: fetched.mode, sunoFetchMessage: fetched.message },
+      completed: ['Parsed Central Command.', `Suno fetch did not return production records for ${playlistUrl || 'the provided URL'}.`],
+      nextSteps: ['Use the Fetch button first and confirm it reports parsed tracks before saving.'],
+      riskNotes
+    };
+  }
 
   const theme = generateThemeFromLyrics(tracks, themePrompt);
   const analysis = analyzeLyrics(tracks, themePrompt);
