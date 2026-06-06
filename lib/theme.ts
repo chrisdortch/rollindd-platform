@@ -9,11 +9,9 @@ const motifPalettes: Record<string, ThemeConfig['palette']> = {
 };
 
 export function analyzeLyrics(tracks: Track[], userPrompt = '') {
-  const corpus = `${userPrompt}
-${tracks.map((t) => t.lyrics).join('
-')}`.toLowerCase();
-  const motifs = ['rain','fire','lake','forest','neon','gold','shadow','light','city','water','storm','home']
-    .map((word) => ({ word, count: (corpus.match(new RegExp(`\b${word}\b`, 'g')) || []).length }))
+  const corpus = [userPrompt, ...tracks.map((track) => track.lyrics)].join('\n').toLowerCase();
+  const motifs = ['rain', 'fire', 'lake', 'forest', 'neon', 'gold', 'shadow', 'light', 'city', 'water', 'storm', 'home']
+    .map((word) => ({ word, count: (corpus.match(new RegExp(`\\b${word}\\b`, 'g')) || []).length }))
     .sort((a, b) => b.count - a.count);
   const top = motifs.filter((m) => m.count > 0).slice(0, 6).map((m) => m.word);
   const dominant = top.includes('neon') ? 'neon' : top.includes('rain') ? 'rain' : top.includes('fire') ? 'fire' : top.includes('forest') ? 'forest' : top.includes('lake') || top.includes('water') ? 'lake' : 'rain';
