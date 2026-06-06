@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { BrandLockup } from '@/components/BrandLockup';
 
 const defaultPlaylistUrl = 'https://suno.com/playlist/782a2eb4-404b-47c3-b992-d5c2be81a5a0';
 
@@ -259,7 +260,7 @@ export function AdminCommand() {
   return (
     <div className="shell">
       <header className="brand-row">
-        <Link className="brand-lockup" href="/"><span className="logo-mark">R</span><span>ROLLINDD</span></Link>
+        <BrandLockup />
         <Link className="pill" href="/">Preview Site</Link>
       </header>
       <section className="hero" style={{ minHeight: 280 }}>

@@ -69,10 +69,11 @@ h3 { font-size: 18px; line-height: 1.18; }
   white-space: nowrap;
 }
 .brand-eye {
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   object-fit: cover;
+  background: #050608;
   box-shadow: 0 0 0 1px rgba(255,255,255,.28), 0 0 24px rgba(215,168,79,.22);
 }
 .wordmark {
@@ -81,17 +82,6 @@ h3 { font-size: 18px; line-height: 1.18; }
   line-height: 1;
 }
 .wordmark span { color: #ffd45f; }
-.logo-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, #f3d68a, #a97224);
-  color: #080a0c;
-  font-weight: 900;
-}
-
 .nav-pills {
   display: flex;
   gap: 8px;
@@ -196,12 +186,33 @@ h3 { font-size: 18px; line-height: 1.18; }
 .production-thumb::after {
   content: "";
   position: absolute;
+  z-index: 1;
   inset: 0;
   background: linear-gradient(180deg, rgba(0,0,0,.06), rgba(0,0,0,.66));
+  pointer-events: none;
+}
+.thumb-play-surface {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: transparent;
+}
+.thumb-play-surface:disabled {
+  cursor: default;
+}
+.thumb-play-surface:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: -3px;
 }
 .thumb-actions {
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   top: 10px;
   left: 10px;
   right: 10px;
@@ -241,6 +252,7 @@ h3 { font-size: 18px; line-height: 1.18; }
 .production-caption {
   position: absolute;
   z-index: 3;
+  pointer-events: none;
   left: 0;
   right: 0;
   bottom: 0;
@@ -503,7 +515,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 
 @media (max-width: 520px) {
   .shell { padding-inline: 10px; }
-  .brand-eye { width: 48px; height: 48px; }
+  .brand-eye { width: 54px; height: 54px; }
   .wordmark { font-size: 22px; }
   .nav-pills { gap: 6px; }
   .pill, .admin-chip, .tool-button, .download-button { padding-inline: 10px; }

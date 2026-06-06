@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import type { CSSProperties } from 'react';
+import { BrandLockup } from '@/components/BrandLockup';
 import type { Site, Track } from '@/lib/types';
 import { searchLyrics } from '@/lib/search';
 
@@ -181,10 +181,7 @@ export function RollinSite({ site }: { site: Site }) {
     } as CSSProperties}>
       <header className="site-toolbar">
         <div className="toolbar-main">
-          <Link className="brand-lockup" href="/">
-            <Image className="brand-eye" src="/brand/rollindd-logo.jpg" alt="" width={56} height={56} priority />
-            <span className="wordmark">RollinD<span>D</span></span>
-          </Link>
+          <BrandLockup />
           <nav className="nav-pills" aria-label="Site navigation">
             <button className="pill action-pill" onClick={playAll} disabled={!playableCount} type="button">
               <PlayIcon /> Play All
@@ -235,6 +232,13 @@ export function RollinSite({ site }: { site: Site }) {
                     // eslint-disable-next-line @next/next/no-img-element
                     <img className="production-media" src={track.coverImageUrl} alt="" loading={index < 3 ? 'eager' : 'lazy'} />
                   )}
+                  <button
+                    className="thumb-play-surface"
+                    onClick={() => toggleTrack(track)}
+                    aria-label={buttonLabel}
+                    type="button"
+                    disabled={!track.audioUrl}
+                  />
                   <div className="thumb-actions">
                     <button className="icon-button" onClick={() => toggleTrack(track)} aria-label={buttonLabel} type="button" disabled={!track.audioUrl}>
                       {trackPlaying ? <PauseIcon /> : <PlayIcon />}
