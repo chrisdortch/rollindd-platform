@@ -296,6 +296,8 @@ export async function saveSiteWithTracks(site: Site) {
   `;
 
   const savedSite = siteResult.rows[0];
+  const sourceTrackIds = site.tracks.map((track) => track.id).filter(Boolean);
+
   for (const track of site.tracks) {
     const existing = await sql<{ id: string }>`
       select id
@@ -365,6 +367,20 @@ export async function saveSiteWithTracks(site: Site) {
         )
       `;
     }
+  }
+
+  if (sourceTrackIds.length) {
+    await sql.query(
+      `delete from tracks
+       where site_id = $1
+         and (source_track_id is null or source_track_id <> all($2::text[]))`,
+      [savedSite.id, sourceTrackIds]
+    );
+  } else {
+    await sql`
+      delete from tracks
+      where site_id = ${savedSite.id}
+    `;
   }
 
   return toSite(savedSite, await getTracksForSite(savedSite.id));
