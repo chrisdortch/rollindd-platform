@@ -134,7 +134,7 @@ export const sampleSite: Site = {
   fallbackSubdomain: 'neon-rain.rollindd.com',
   title: 'Neon Rain',
   tagline: 'Songs for the storm before sunrise.',
-  sunoPlaylistUrl: 'https://suno.com/playlist/example',
+  sunoPlaylistUrl: 'https://suno.com/playlist/782a2eb4-404b-47c3-b992-d5c2be81a5a0',
   status: 'preview',
   theme: {
     palette: {
