@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminSecret } from '@/lib/admin-auth';
 import { runCentralCommand } from '@/lib/command';
 
 export async function POST(request: NextRequest) {
+  const authResponse = requireAdminSecret(request);
+  if (authResponse) return authResponse;
+
   const { command } = await request.json();
   if (!command || typeof command !== 'string') {
     return NextResponse.json({ status: 'failed', error: 'Missing command text.' }, { status: 400 });

@@ -1,6 +1,8 @@
 -- RollinDD starter schema for Neon/Vercel Postgres.
 -- Apply after creating the database. The starter app runs without this in demo mode.
 
+create extension if not exists pgcrypto;
+
 create table if not exists sites (
   id uuid primary key default gen_random_uuid(),
   slug text unique not null,

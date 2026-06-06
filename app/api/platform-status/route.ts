@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getAdminAuthStatus } from '@/lib/admin-auth';
 import { getDatabaseStatus } from '@/lib/persistence';
 
 export const dynamic = 'force-dynamic';
@@ -16,13 +17,23 @@ function releaseInfo() {
 
 export async function GET() {
   const database = await getDatabaseStatus();
+  const admin = getAdminAuthStatus();
   const mode = database.schemaReady ? 'database' : 'demo-fallback';
+  const nextActions = [
+    ...(!admin.configured && admin.required ? ['Set ROLLINDD_ADMIN_SECRET for production and preview.'] : []),
+    ...(database.schemaReady
+      ? ['Run Central Command from /admin to save site and track records.']
+      : database.configured
+        ? ['Apply sql/schema.sql from /admin.', 'Recheck /admin for database readiness.']
+        : ['Connect Vercel Postgres to this project.', 'Apply sql/schema.sql from /admin.', 'Recheck /admin for database readiness.'])
+  ];
 
   return NextResponse.json({
     ok: true,
     app: 'rollindd-platform',
     mode,
     database,
+    admin,
     release: releaseInfo(),
     checks: [
       {
@@ -37,12 +48,10 @@ export async function GET() {
       },
       {
         label: 'Central Command safety',
-        status: 'ready',
-        detail: 'Commands prepare RollinDD preview data only; no DNS, domain, purchase, or non-RollinDD project actions are automatic.'
+        status: admin.configured ? 'ready' : admin.required ? 'blocked' : 'attention',
+        detail: admin.message
       }
     ],
-    nextActions: database.schemaReady
-      ? ['Run Central Command from /admin to save site and track records.']
-      : ['Connect Vercel Postgres to this project.', 'Apply sql/schema.sql to the database.', 'Recheck /admin for database readiness.']
+    nextActions
   });
 }

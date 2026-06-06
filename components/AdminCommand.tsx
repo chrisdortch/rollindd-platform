@@ -25,6 +25,13 @@ type PlatformStatus = {
     missingTables: string[];
     message: string;
   };
+  admin: {
+    configured: boolean;
+    required: boolean;
+    headerName: string;
+    mode: string;
+    message: string;
+  };
   release: {
     environment: string;
     branch: string;
@@ -49,14 +56,32 @@ type CommandResult = {
   };
 };
 
+type SchemaResult = {
+  ok?: boolean;
+  status?: string;
+  applied?: string[];
+  error?: string;
+  nextSteps?: string[];
+  after?: PlatformStatus['database'];
+};
+
 export function AdminCommand() {
   const [command, setCommand] = useState(defaultCommand);
   const [url, setUrl] = useState('https://suno.com/playlist/example');
   const [result, setResult] = useState<CommandResult | null>(null);
+  const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
   const [rawResult, setRawResult] = useState('');
+  const [adminSecret, setAdminSecret] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return window.sessionStorage.getItem('rollindd-admin-secret') || '';
+  });
   const [platformStatus, setPlatformStatus] = useState<PlatformStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [schemaLoading, setSchemaLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
+
+  const adminSecretRequired = Boolean(platformStatus?.admin.required);
+  const canUseAdminActions = !adminSecretRequired || adminSecret.trim().length > 0;
 
   async function refreshStatus() {
     setStatusLoading(true);
@@ -73,6 +98,13 @@ export function AdminCommand() {
           schemaReady: false,
           missingTables: [],
           message: error instanceof Error ? error.message : 'Status check failed.'
+        },
+        admin: {
+          configured: false,
+          required: true,
+          headerName: 'x-rollindd-admin-secret',
+          mode: 'unknown',
+          message: 'Admin status check failed.'
         },
         release: { environment: '', branch: '', commit: '', deploymentUrl: '' },
         checks: [{ label: 'Platform status', status: 'blocked', detail: 'Status check failed.' }],
@@ -102,6 +134,13 @@ export function AdminCommand() {
               missingTables: [],
               message: error instanceof Error ? error.message : 'Status check failed.'
             },
+            admin: {
+              configured: false,
+              required: true,
+              headerName: 'x-rollindd-admin-secret',
+              mode: 'unknown',
+              message: 'Admin status check failed.'
+            },
             release: { environment: '', branch: '', commit: '', deploymentUrl: '' },
             checks: [{ label: 'Platform status', status: 'blocked', detail: 'Status check failed.' }],
             nextActions: ['Refresh the admin page and retry the status check.']
@@ -118,16 +157,38 @@ export function AdminCommand() {
     };
   }, []);
 
+  function adminHeaders(): Record<string, string> {
+    return adminSecret.trim() ? { 'x-rollindd-admin-secret': adminSecret.trim() } : {};
+  }
+
+  function rememberAdminSecret(value: string) {
+    setAdminSecret(value);
+    if (typeof window !== 'undefined') window.sessionStorage.setItem('rollindd-admin-secret', value);
+  }
+
   async function runCommand() {
     setLoading(true);
     try {
-      const response = await fetch('/api/central-command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command }) });
+      const response = await fetch('/api/central-command', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ command }) });
       const json = await response.json();
       setResult(json);
       setRawResult(JSON.stringify(json, null, 2));
       await refreshStatus();
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function applySchema() {
+    setSchemaLoading(true);
+    try {
+      const response = await fetch('/api/admin/apply-schema', { method: 'POST', headers: adminHeaders() });
+      const json = await response.json();
+      setSchemaResult(json);
+      setRawResult(JSON.stringify(json, null, 2));
+      await refreshStatus();
+    } finally {
+      setSchemaLoading(false);
     }
   }
 
@@ -180,6 +241,7 @@ export function AdminCommand() {
               {platformStatus.release.branch && <span className="mono-chip">{platformStatus.release.branch}</span>}
               {platformStatus.release.commit && <span className="mono-chip">{platformStatus.release.commit}</span>}
               <span className="mono-chip">{platformStatus.database.schemaReady ? 'schema ready' : 'schema pending'}</span>
+              <span className="mono-chip">{platformStatus.admin.configured ? 'admin secret set' : 'admin secret missing'}</span>
             </div>
             {!platformStatus.database.schemaReady && (
               <div className="next-action-box">
@@ -210,7 +272,30 @@ export function AdminCommand() {
         </section>
       </div>
       <section className="command-panel">
-        <div className="section-row" style={{ marginTop: 0 }}><h2>RollinDD Central Command</h2><button className="gold-button" onClick={runCommand} disabled={loading}>{loading ? 'Running...' : 'Run Safe Actions'}</button></div>
+        <div className="section-row" style={{ marginTop: 0 }}>
+          <div>
+            <div className="kicker">Admin Access</div>
+            <h2>{platformStatus?.admin.configured ? 'Admin key required.' : 'Admin key is not configured.'}</h2>
+          </div>
+          <button className="ghost-button" onClick={() => rememberAdminSecret('')} disabled={!adminSecret}>Clear</button>
+        </div>
+        <div className="input-row">
+          <input type="password" value={adminSecret} onChange={(event) => rememberAdminSecret(event.target.value)} placeholder="ROLLINDD_ADMIN_SECRET" />
+          <button className="ghost-button" onClick={applySchema} disabled={schemaLoading || !platformStatus?.database.configured || platformStatus.database.schemaReady || !canUseAdminActions}>
+            {schemaLoading ? 'Applying...' : 'Apply Schema'}
+          </button>
+        </div>
+        <p className="helper">{platformStatus?.admin.message}</p>
+        {schemaResult && (
+          <div className="detail-list">
+            <strong>Schema</strong>
+            <span>{schemaResult.error || schemaResult.after?.message || schemaResult.status || 'Schema action finished.'}</span>
+            {schemaResult.applied?.length ? <span>{schemaResult.applied.length} statements applied.</span> : null}
+          </div>
+        )}
+      </section>
+      <section className="command-panel">
+        <div className="section-row" style={{ marginTop: 0 }}><h2>RollinDD Central Command</h2><button className="gold-button" onClick={runCommand} disabled={loading || !canUseAdminActions}>{loading ? 'Running...' : 'Run Safe Actions'}</button></div>
         <textarea rows={12} value={command} onChange={(e) => setCommand(e.target.value)} />
         <p className="helper">The command result will tell you completed actions, risk notes, and exact next steps.</p>
       </section>
