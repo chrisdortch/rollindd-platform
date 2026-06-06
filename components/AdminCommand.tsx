@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+const defaultPlaylistUrl = 'https://suno.com/playlist/782a2eb4-404b-47c3-b992-d5c2be81a5a0';
+
 const defaultCommand = `ROLLINDD LAUNCH
 
-Site name: Neon Rain
-Suno playlist: https://suno.com/playlist/example
-Domain: neonrain.com
-Theme instruction: cinematic cyberpunk heartbreak, rain, neon, spiritual resilience, gold-on-black luxury
+Site name: RollinDD
+Suno playlist: ${defaultPlaylistUrl}
+Domain: rollindd-platform.vercel.app
+Theme instruction: fearlessness, love, wisdom, patience, collaboration, competition, luminous cinematic resilience
 Artist names: hide
 Lyrics search: enabled
 Exact match: enabled
@@ -67,7 +69,7 @@ type SchemaResult = {
 
 export function AdminCommand() {
   const [command, setCommand] = useState(defaultCommand);
-  const [url, setUrl] = useState('https://suno.com/playlist/example');
+  const [url, setUrl] = useState(defaultPlaylistUrl);
   const [result, setResult] = useState<CommandResult | null>(null);
   const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
   const [rawResult, setRawResult] = useState('');
