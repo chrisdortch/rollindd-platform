@@ -67,23 +67,31 @@ type SchemaResult = {
   after?: PlatformStatus['database'];
 };
 
+type SessionStatus = {
+  authenticated: boolean;
+  configured?: boolean;
+  required?: boolean;
+  mode?: string;
+  message?: string;
+};
+
 export function AdminCommand() {
   const [command, setCommand] = useState(defaultCommand);
   const [url, setUrl] = useState(defaultPlaylistUrl);
   const [result, setResult] = useState<CommandResult | null>(null);
   const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
   const [rawResult, setRawResult] = useState('');
-  const [adminSecret, setAdminSecret] = useState(() => {
-    if (typeof window === 'undefined') return '';
-    return window.sessionStorage.getItem('rollindd-admin-secret') || '';
-  });
+  const [adminSecret, setAdminSecret] = useState('');
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [platformStatus, setPlatformStatus] = useState<PlatformStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(false);
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
 
   const adminSecretRequired = Boolean(platformStatus?.admin.required);
-  const canUseAdminActions = !adminSecretRequired || adminSecret.trim().length > 0;
+  const adminUnlocked = !adminSecretRequired || Boolean(sessionStatus?.authenticated);
+  const canUseAdminActions = adminUnlocked || adminSecret.trim().length > 0;
 
   async function refreshStatus() {
     setStatusLoading(true);
@@ -122,9 +130,14 @@ export function AdminCommand() {
 
     async function loadInitialStatus() {
       try {
-        const response = await fetch('/api/platform-status');
-        const json = await response.json();
+        const [statusResponse, sessionResponse] = await Promise.all([
+          fetch('/api/platform-status'),
+          fetch('/api/admin/session')
+        ]);
+        const json = await statusResponse.json();
+        const sessionJson = await sessionResponse.json();
         if (mounted) setPlatformStatus(json);
+        if (mounted) setSessionStatus(sessionJson);
       } catch (error) {
         if (mounted) {
           setPlatformStatus({
@@ -163,9 +176,39 @@ export function AdminCommand() {
     return adminSecret.trim() ? { 'x-rollindd-admin-secret': adminSecret.trim() } : {};
   }
 
-  function rememberAdminSecret(value: string) {
-    setAdminSecret(value);
-    if (typeof window !== 'undefined') window.sessionStorage.setItem('rollindd-admin-secret', value);
+  async function refreshSession() {
+    const response = await fetch('/api/admin/session');
+    const json = await response.json();
+    setSessionStatus(json);
+    return json as SessionStatus;
+  }
+
+  async function unlockAdmin() {
+    setSessionLoading(true);
+    try {
+      const response = await fetch('/api/admin/session', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ secret: adminSecret })
+      });
+      const json = await response.json();
+      setSessionStatus(json);
+      if (response.ok) setAdminSecret('');
+      setRawResult(JSON.stringify(json, null, 2));
+    } finally {
+      setSessionLoading(false);
+    }
+  }
+
+  async function lockAdmin() {
+    setSessionLoading(true);
+    try {
+      await fetch('/api/admin/session', { method: 'DELETE' });
+      setAdminSecret('');
+      await refreshSession();
+    } finally {
+      setSessionLoading(false);
+    }
   }
 
   async function runCommand() {
@@ -176,6 +219,7 @@ export function AdminCommand() {
       setResult(json);
       setRawResult(JSON.stringify(json, null, 2));
       await refreshStatus();
+      await refreshSession();
     } finally {
       setLoading(false);
     }
@@ -277,17 +321,20 @@ export function AdminCommand() {
         <div className="section-row" style={{ marginTop: 0 }}>
           <div>
             <div className="kicker">Admin Access</div>
-            <h2>{platformStatus?.admin.configured ? 'Admin key required.' : 'Admin key is not configured.'}</h2>
+            <h2>{adminUnlocked ? 'Admin session is unlocked.' : platformStatus?.admin.configured ? 'Unlock admin once.' : 'Admin key is not configured.'}</h2>
           </div>
-          <button className="ghost-button" onClick={() => rememberAdminSecret('')} disabled={!adminSecret}>Clear</button>
+          <button className="ghost-button" onClick={lockAdmin} disabled={sessionLoading || (!adminSecret && !sessionStatus?.authenticated)}>Lock</button>
         </div>
         <div className="input-row">
-          <input type="password" value={adminSecret} onChange={(event) => rememberAdminSecret(event.target.value)} placeholder="ROLLINDD_ADMIN_SECRET" />
+          <input type="password" value={adminSecret} onChange={(event) => setAdminSecret(event.target.value)} placeholder={adminUnlocked ? 'Admin session active' : 'ROLLINDD_ADMIN_SECRET'} />
+          <button className="ghost-button" onClick={unlockAdmin} disabled={sessionLoading || !adminSecret.trim()}>
+            {sessionLoading ? 'Unlocking...' : 'Unlock'}
+          </button>
           <button className="ghost-button" onClick={applySchema} disabled={schemaLoading || !platformStatus?.database.configured || platformStatus.database.schemaReady || !canUseAdminActions}>
             {schemaLoading ? 'Applying...' : 'Apply Schema'}
           </button>
         </div>
-        <p className="helper">{platformStatus?.admin.message}</p>
+        <p className="helper">{adminUnlocked ? 'This browser can run admin actions without repasting the secret.' : platformStatus?.admin.message}</p>
         {schemaResult && (
           <div className="detail-list">
             <strong>Schema</strong>
