@@ -75,3 +75,9 @@ create table if not exists theme_generations (
   status text not null default 'draft',
   created_at timestamptz not null default now()
 );
+
+create index if not exists sites_primary_domain_idx on sites(primary_domain);
+create index if not exists sites_fallback_subdomain_idx on sites(fallback_subdomain);
+create index if not exists tracks_site_sort_idx on tracks(site_id, sort_order);
+create index if not exists tracks_site_source_track_idx on tracks(site_id, source_track_id);
+create index if not exists commands_site_created_idx on commands(site_id, created_at desc);
