@@ -124,7 +124,7 @@ export async function runCentralCommand(raw: string): Promise<CentralCommandResu
       persistence = 'database';
       status = 'completed';
       completed.push('Saved site and track records to Postgres.');
-      completed.push('Recorded matching tracks without deleting stale playlist data.');
+      completed.push('Replaced stale track records with the latest fetched playlist data.');
       nextSteps.push(`Review the persisted site at /sites/${resultSite.slug}.`);
       if (domain) {
         riskNotes.push(`Stored ${domain} as the desired primary domain only; Vercel domain assignment still requires approval.`);
