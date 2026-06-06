@@ -1,5 +1,6 @@
- 'use client';
+'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 
 const defaultCommand = `ROLLINDD LAUNCH
@@ -40,8 +41,8 @@ export function AdminCommand() {
   return (
     <div className="shell">
       <header className="brand-row">
-        <a className="brand-lockup" href="/"><span className="logo-mark">R</span><span>ROLLINDD</span></a>
-        <a className="pill" href="/">Preview Site</a>
+        <Link className="brand-lockup" href="/"><span className="logo-mark">R</span><span>ROLLINDD</span></Link>
+        <Link className="pill" href="/">Preview Site</Link>
       </header>
       <section className="hero" style={{ minHeight: 280 }}>
         <div className="hero-content">
