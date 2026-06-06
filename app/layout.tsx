@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import './brand-logo.css';
 
 const title = 'RollinDD | Playlist Premiere Platform';
 const description = 'Play RollinDD productions, read the words, and download individual MP3s or the full playlist.';
