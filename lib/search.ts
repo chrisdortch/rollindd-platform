@@ -20,9 +20,18 @@ export function searchLyrics(tracks: Track[], query: string, exact = false) {
 }
 
 export function snippetFor(track: Track, query: string) {
-  return track.lyrics.replace(/\n/g, ' ').slice(0, 180);
+  const lyrics = track.lyrics.replace(/\n/g, ' ');
+  const q = clean(removeQuotes(query));
+  if (!q) return lyrics.slice(0, 180);
+
+  const index = lyrics.toLowerCase().indexOf(q);
+  const start = Math.max(index - 60, 0);
+  return lyrics.slice(start, start + 180);
 }
 
 export function highlightSnippet(snippet: string, query: string) {
-  return snippet;
+  const q = clean(removeQuotes(query));
+  if (!q) return snippet;
+
+  return snippet.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'), '<mark>$1</mark>');
 }
