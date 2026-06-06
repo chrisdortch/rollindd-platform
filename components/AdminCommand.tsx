@@ -84,6 +84,7 @@ export function AdminCommand() {
   const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
   const [rawResult, setRawResult] = useState('');
   const [adminPin, setAdminPin] = useState('');
+  const [adminError, setAdminError] = useState('');
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [platformStatus, setPlatformStatus] = useState<PlatformStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,8 +92,9 @@ export function AdminCommand() {
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
 
-  const adminSecretRequired = Boolean(platformStatus?.admin.required);
-  const adminUnlocked = !adminSecretRequired || Boolean(sessionStatus?.authenticated);
+  const adminSecretRequired = platformStatus?.admin.required ?? true;
+  const adminUnlocked = Boolean(platformStatus && (!adminSecretRequired || sessionStatus?.authenticated));
+  const showAdminGate = statusLoading || !adminUnlocked;
   const canUseAdminActions = adminUnlocked;
 
   async function refreshStatus() {
@@ -191,7 +193,12 @@ export function AdminCommand() {
       });
       const json = await response.json();
       setSessionStatus(json);
-      if (response.ok) setAdminPin('');
+      if (response.ok) {
+        setAdminPin('');
+        setAdminError('');
+      } else {
+        setAdminError(json.error || 'That PIN did not unlock admin.');
+      }
       setRawResult(JSON.stringify(json, null, 2));
     } finally {
       setSessionLoading(false);
@@ -203,6 +210,7 @@ export function AdminCommand() {
     try {
       await fetch('/api/admin/session', { method: 'DELETE' });
       setAdminPin('');
+      setAdminError('');
       await refreshSession();
     } finally {
       setSessionLoading(false);
@@ -255,6 +263,51 @@ export function AdminCommand() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (showAdminGate) {
+    return (
+      <main className="admin-gate-shell">
+        <section className="admin-gate-card" aria-label="Admin access">
+          <BrandLockup />
+          <div className="admin-key-icon" aria-hidden="true">
+            <span />
+          </div>
+          <div>
+            <div className="kicker">Admin Access</div>
+            <h1>{statusLoading ? 'Checking access.' : 'Enter admin PIN.'}</h1>
+            <p className="lede">
+              {statusLoading
+                ? 'Confirming the RollinDD admin session.'
+                : 'Unlock Central Command to fetch, save, and publish productions.'}
+            </p>
+          </div>
+          <div className="admin-gate-form">
+            <input
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={adminPin}
+              onChange={(event) => {
+                setAdminPin(event.target.value);
+                setAdminError('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && adminPin.trim() && !sessionLoading) void unlockAdmin();
+              }}
+              placeholder="PIN"
+              aria-label="Admin PIN"
+              disabled={statusLoading}
+            />
+            <button className="gold-button" onClick={unlockAdmin} disabled={statusLoading || sessionLoading || !adminPin.trim()}>
+              {sessionLoading ? 'Unlocking...' : 'Unlock'}
+            </button>
+          </div>
+          {adminError && <p className="admin-error">{adminError}</p>}
+          <Link className="pill admin-preview-link" href="/">Preview Site</Link>
+        </section>
+      </main>
+    );
   }
 
   return (

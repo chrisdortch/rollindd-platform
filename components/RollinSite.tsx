@@ -7,6 +7,11 @@ import { BrandLockup } from '@/components/BrandLockup';
 import type { Site, Track } from '@/lib/types';
 import { searchLyrics } from '@/lib/search';
 
+type ViewMode = 'showcase' | 'grid';
+type AirPlayAudioElement = HTMLAudioElement & {
+  webkitShowPlaybackTargetPicker?: () => void;
+};
+
 function formatDuration(seconds?: number) {
   if (!seconds) return '--:--';
   const minutes = Math.floor(seconds / 60);
@@ -87,6 +92,36 @@ function DownloadIcon() {
   );
 }
 
+function ShowcaseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="5" y="4" width="14" height="16" rx="2" />
+      <path d="M8 17h8" />
+    </svg>
+  );
+}
+
+function GridIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 4h6v6H4z" />
+      <path d="M14 4h6v6h-6z" />
+      <path d="M4 14h6v6H4z" />
+      <path d="M14 14h6v6h-6z" />
+    </svg>
+  );
+}
+
+function AirPlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 6h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3" />
+      <path d="M8 17H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2" />
+      <path d="m12 15 5 6H7l5-6Z" />
+    </svg>
+  );
+}
+
 function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -107,6 +142,8 @@ export function RollinSite({ site }: { site: Site }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playIntentTrackId, setPlayIntentTrackId] = useState<string | null>(null);
   const [infoTrackId, setInfoTrackId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('grid');
+  const [airPlayAvailable, setAirPlayAvailable] = useState(false);
 
   const exact = isExactSearch(query);
   const tracks = useMemo(
@@ -126,6 +163,14 @@ export function RollinSite({ site }: { site: Site }) {
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [infoTrackId]);
+
+  useEffect(() => {
+    const audio = audioRef.current as AirPlayAudioElement | null;
+    if (!audio) return;
+
+    audio.setAttribute('x-webkit-airplay', 'allow');
+    setAirPlayAvailable(typeof audio.webkitShowPlaybackTargetPicker === 'function');
+  }, []);
 
   function playTrack(track: Track) {
     if (!track.audioUrl) return;
@@ -170,6 +215,11 @@ export function RollinSite({ site }: { site: Site }) {
     }
   }
 
+  function openAirPlayPicker() {
+    const audio = audioRef.current as AirPlayAudioElement | null;
+    audio?.webkitShowPlaybackTargetPicker?.();
+  }
+
   return (
     <main className="shell music-shell" style={{
       '--bg': site.theme.palette.background,
@@ -209,9 +259,29 @@ export function RollinSite({ site }: { site: Site }) {
             <div className="kicker">Library</div>
             <h1>{tracks.length === sortedTracks.length ? `${sortedTracks.length} Productions` : `${tracks.length} Matches`}</h1>
           </div>
+          <div className="view-switch" aria-label="View options">
+            <button
+              className={viewMode === 'showcase' ? 'active' : ''}
+              onClick={() => setViewMode('showcase')}
+              aria-label="Showcase view"
+              aria-pressed={viewMode === 'showcase'}
+              type="button"
+            >
+              <ShowcaseIcon />
+            </button>
+            <button
+              className={viewMode === 'grid' ? 'active' : ''}
+              onClick={() => setViewMode('grid')}
+              aria-label="Grid view"
+              aria-pressed={viewMode === 'grid'}
+              type="button"
+            >
+              <GridIcon />
+            </button>
+          </div>
         </div>
 
-        <div className="production-grid">
+        <div className={`production-grid is-${viewMode}`}>
           {tracks.map((track, index) => {
             const trackPlaying = selectedTrack?.id === track.id && (isPlaying || playIntentTrackId === track.id);
             const buttonLabel = `${trackPlaying ? 'Pause' : 'Play'} ${track.title}`;
@@ -270,22 +340,33 @@ export function RollinSite({ site }: { site: Site }) {
           <span>Now playing</span>
           <strong>{selectedTrack?.title || 'Choose a production'}</strong>
         </div>
-        <audio
-          ref={audioRef}
-          src={selectedTrack?.audioUrl}
-          controls
-          preload="metadata"
-          onEnded={() => {
-            setPlayIntentTrackId(null);
-            playNext();
-          }}
-          onPause={() => setIsPlaying(false)}
-          onPlay={() => setIsPlaying(true)}
-          onError={() => {
-            setIsPlaying(false);
-            setPlayIntentTrackId(null);
-          }}
-        />
+        <div className="player-control-row">
+          <audio
+            ref={audioRef}
+            src={selectedTrack?.audioUrl}
+            controls
+            preload="metadata"
+            onEnded={() => {
+              setPlayIntentTrackId(null);
+              playNext();
+            }}
+            onPause={() => setIsPlaying(false)}
+            onPlay={() => setIsPlaying(true)}
+            onError={() => {
+              setIsPlaying(false);
+              setPlayIntentTrackId(null);
+            }}
+          />
+          <button
+            className="icon-button airplay-button"
+            onClick={openAirPlayPicker}
+            aria-label="Send audio to TV"
+            type="button"
+            disabled={!selectedTrack || !airPlayAvailable}
+          >
+            <AirPlayIcon />
+          </button>
+        </div>
       </section>
 
       {infoTrack && (
