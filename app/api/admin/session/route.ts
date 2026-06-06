@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminSessionCookieName, adminSessionValue, getAdminAuthStatus, hasValidAdminSession, isValidAdminSecret } from '@/lib/admin-auth';
+import { adminSessionCookieName, adminSessionValue, getAdminAuthStatus, hasValidAdminSession, isValidAdminPin, isValidAdminSecret } from '@/lib/admin-auth';
 
 const cookieOptions = {
   httpOnly: true,
@@ -19,14 +19,16 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const status = getAdminAuthStatus();
-  const { secret } = await request.json();
+  const { pin, secret } = await request.json();
 
   if (!status.required) {
     return NextResponse.json({ authenticated: true, mode: status.mode });
   }
 
-  if (!isValidAdminSecret(String(secret || ''))) {
-    return NextResponse.json({ authenticated: false, error: 'Admin secret is missing or invalid.' }, { status: 401 });
+  const authorized = isValidAdminPin(String(pin || '')) || isValidAdminSecret(String(secret || ''));
+
+  if (!authorized) {
+    return NextResponse.json({ authenticated: false, error: 'Admin PIN is missing or invalid.' }, { status: 401 });
   }
 
   const response = NextResponse.json({ authenticated: true, mode: status.mode });

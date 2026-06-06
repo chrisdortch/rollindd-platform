@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import type { CSSProperties } from 'react';
 import type { Site, Track } from '@/lib/types';
-import { searchLyrics, snippetFor } from '@/lib/search';
+import { searchLyrics } from '@/lib/search';
 
 function formatDuration(seconds?: number) {
   if (!seconds) return '--:--';
@@ -13,30 +14,32 @@ function formatDuration(seconds?: number) {
   return `${minutes}:${rest}`;
 }
 
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function isExactSearch(query: string) {
+  const trimmed = query.trim();
+  return trimmed.length > 1 && trimmed.startsWith('"') && trimmed.endsWith('"');
 }
 
-function HighlightedSnippet({ snippet, query }: { snippet: string; query: string }) {
-  const q = query.trim().replace(/^"/, '').replace(/"$/, '');
-  if (!q) return <>{snippet}</>;
-
-  const parts = snippet.split(new RegExp(`(${escapeRegExp(q)})`, 'ig'));
-  return (
-    <>
-      {parts.map((part, index) => (
-        part.toLowerCase() === q.toLowerCase() ? <mark key={`${part}-${index}`}>{part}</mark> : part
-      ))}
-    </>
-  );
+function cleanWordLine(line: string) {
+  const withoutDirections = line.replace(/\[[^\]]+\]/g, '').replace(/\s+/g, ' ').trim();
+  return withoutDirections;
 }
 
-function lyricRows(track: Track) {
-  return track.lyrics.split(/\r?\n/).map((line, index) => ({
-    id: `${track.id}-${index}`,
-    text: line.trim(),
-    direction: /^\[.*\]$/.test(line.trim())
-  }));
+function wordRows(track: Track) {
+  const rows: Array<{ id: string; text: string; pause: boolean }> = [];
+
+  track.lyrics.split(/\r?\n/).forEach((line, index) => {
+    const text = cleanWordLine(line);
+    const previous = rows[rows.length - 1];
+
+    if (!text) {
+      if (rows.length && !previous?.pause) rows.push({ id: `${track.id}-${index}`, text: '', pause: true });
+      return;
+    }
+
+    rows.push({ id: `${track.id}-${index}`, text, pause: false });
+  });
+
+  return rows;
 }
 
 function downloadTrackHref(site: Site, track: Track) {
@@ -47,6 +50,43 @@ function downloadAllHref(site: Site) {
   return `/api/download-all?site=${encodeURIComponent(site.slug)}`;
 }
 
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 5.5v13l10-6.5-10-6.5Z" />
+    </svg>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 10.8v5.8" />
+      <path d="M12 7.4h.01" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4v10" />
+      <path d="m8 10 4 4 4-4" />
+      <path d="M5 19h14" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6 6 12 12" />
+      <path d="M18 6 6 18" />
+    </svg>
+  );
+}
+
 export function RollinSite({ site }: { site: Site }) {
   const sortedTracks = useMemo(
     () => [...site.tracks].sort((a, b) => a.sortOrder - b.sortOrder),
@@ -54,19 +94,18 @@ export function RollinSite({ site }: { site: Site }) {
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [query, setQuery] = useState('');
-  const [exact, setExact] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState<Track | undefined>(sortedTracks[0]);
-  const [queueActive, setQueueActive] = useState(false);
   const [autoPlayRequested, setAutoPlayRequested] = useState(false);
-  const [expandedTrackId, setExpandedTrackId] = useState<string | null>(null);
+  const [infoTrackId, setInfoTrackId] = useState<string | null>(null);
 
+  const exact = isExactSearch(query);
   const tracks = useMemo(
     () => searchLyrics(sortedTracks, query, exact),
     [exact, query, sortedTracks]
   );
   const downloadableCount = sortedTracks.filter((track) => track.downloadable && track.mp3Url).length;
   const selectedIndex = selectedTrack ? sortedTracks.findIndex((track) => track.id === selectedTrack.id) : -1;
-  const heroStyle = { '--hero-image': `url(${selectedTrack?.coverImageUrl || site.theme.hero.imageUrl})` } as CSSProperties;
+  const infoTrack = sortedTracks.find((track) => track.id === infoTrackId);
 
   useEffect(() => {
     if (!autoPlayRequested || !audioRef.current) return;
@@ -74,25 +113,30 @@ export function RollinSite({ site }: { site: Site }) {
     setAutoPlayRequested(false);
   }, [autoPlayRequested, selectedTrack]);
 
-  function playTrack(track: Track, queue = false) {
+  useEffect(() => {
+    if (!infoTrackId) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setInfoTrackId(null);
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [infoTrackId]);
+
+  function playTrack(track: Track) {
     setSelectedTrack(track);
-    setQueueActive(queue);
     setAutoPlayRequested(true);
   }
 
   function playAll() {
     const firstPlayable = sortedTracks.find((track) => track.audioUrl);
-    if (firstPlayable) playTrack(firstPlayable, true);
+    if (firstPlayable) playTrack(firstPlayable);
   }
 
   function playNext() {
     if (!sortedTracks.length) return;
-    const nextTrack = sortedTracks[(selectedIndex + 1) % sortedTracks.length];
-    playTrack(nextTrack, queueActive);
-  }
-
-  function handleEnded() {
-    if (queueActive) playNext();
+    const nextIndex = selectedIndex >= 0 ? selectedIndex + 1 : 0;
+    const nextTrack = sortedTracks[nextIndex % sortedTracks.length];
+    playTrack(nextTrack);
   }
 
   return (
@@ -105,118 +149,143 @@ export function RollinSite({ site }: { site: Site }) {
       '--accent-2': site.theme.palette.accent2
     } as CSSProperties}>
       <header className="site-toolbar">
-        <Link className="brand-lockup" href="/"><span className="logo-mark">R</span><span>ROLLINDD</span></Link>
+        <div className="toolbar-main">
+          <Link className="brand-lockup" href="/">
+            <Image className="brand-eye" src="/brand/rollindd-eye.svg" alt="" width={42} height={42} priority />
+            <span className="wordmark">RollinD<span>D</span></span>
+          </Link>
+          <nav className="nav-pills" aria-label="Site navigation">
+            <button className="pill action-pill" onClick={playAll} disabled={!downloadableCount} type="button">
+              <PlayIcon /> Play All
+            </button>
+            <Link className="pill" href="/admin">Admin</Link>
+            <a className={downloadableCount ? 'download-button nav-download' : 'download-button nav-download disabled'} href={downloadableCount ? downloadAllHref(site) : undefined}>
+              <DownloadIcon /> Download All
+            </a>
+            <a className="admin-chip" href={site.sunoPlaylistUrl || '#'}>Suno</a>
+          </nav>
+        </div>
         <label className="toolbar-search">
           <span>Search</span>
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Title, lyric, mood"
+            placeholder='Keyword or "exact words"'
           />
         </label>
-        <button className={exact ? 'tool-button active' : 'tool-button'} onClick={() => setExact((value) => !value)}>
-          Exact
-        </button>
-        <nav className="nav-pills" aria-label="Site navigation">
-          <Link className="pill" href="/admin">Admin</Link>
-          <a className="admin-chip" href={site.sunoPlaylistUrl || '#'}>Suno</a>
-        </nav>
       </header>
 
-      <section className="library-hero" style={heroStyle}>
-        <div className="now-art" style={{ backgroundImage: `url(${selectedTrack?.coverImageUrl || site.theme.hero.imageUrl})` }} />
-        <div className="now-copy">
-          <div className="kicker">{site.status}</div>
-          <h1>{site.title}</h1>
-          <p className="lede">{site.tagline || site.theme.hero.subheadline}</p>
-          <div className="now-title">
-            <span>Now selected</span>
-            <strong>{selectedTrack?.title || 'Choose a track'}</strong>
-          </div>
-          <div className="cta-row">
-            <button className="gold-button" onClick={() => selectedTrack && playTrack(selectedTrack)}>Play Selected</button>
-            <button className="ghost-button" onClick={playAll} disabled={!downloadableCount}>Play All</button>
-            <a className={downloadableCount ? 'download-button' : 'download-button disabled'} href={downloadableCount ? downloadAllHref(site) : undefined}>
-              Download All
-            </a>
-          </div>
-          <audio
-            ref={audioRef}
-            src={selectedTrack?.audioUrl}
-            controls
-            preload="metadata"
-            onEnded={handleEnded}
-          />
-        </div>
-      </section>
-
-      <section id="tracks" className="library-section" aria-label="Tracks">
+      <section id="tracks" className="library-section" aria-label="Productions">
         <div className="library-heading">
           <div>
             <div className="kicker">Library</div>
-            <h2>{tracks.length === sortedTracks.length ? `${sortedTracks.length} Songs` : `${tracks.length} Matches`}</h2>
+            <h1>{tracks.length === sortedTracks.length ? `${sortedTracks.length} Productions` : `${tracks.length} Matches`}</h1>
           </div>
-          <span className="badge">{downloadableCount} MP3 downloads</span>
         </div>
 
-        <div className="track-list">
+        <div className="production-grid">
           {tracks.map((track, index) => {
             const selected = selectedTrack?.id === track.id;
-            const expanded = expandedTrackId === track.id;
             return (
-              <article className={selected ? 'track-row selected' : 'track-row'} key={track.id}>
-                <button className="row-play" onClick={() => playTrack(track, queueActive)} aria-label={`Play ${track.title}`}>
-                  <span className="row-thumb" style={{ backgroundImage: `url(${track.coverImageUrl})` }} />
-                  <span className="row-play-symbol">{selected ? 'Playing' : 'Play'}</span>
-                </button>
-                <div className="track-main">
-                  <div className="track-meta">
-                    <span className="track-number">{String(index + 1).padStart(2, '0')}</span>
-                    <div>
-                      <h3>{track.title}</h3>
-                      <p>
-                        {formatDuration(track.durationSeconds)} · {track.mediaStatus || 'partial'}
-                        {query && <span> · <HighlightedSnippet snippet={snippetFor(track, query)} query={query} /></span>}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="track-actions">
-                    <button className="ghost-button compact" onClick={() => setExpandedTrackId(expanded ? null : track.id)}>
-                      {expanded ? 'Hide Info' : 'More Info'}
+              <article className={selected ? 'production-card playing' : 'production-card'} key={track.id}>
+                <div className="production-thumb" style={{ backgroundImage: `url(${track.coverImageUrl})` }}>
+                  <div className="thumb-actions">
+                    <button className="icon-button" onClick={() => playTrack(track)} aria-label={`Play ${track.title}`} type="button">
+                      <PlayIcon />
+                    </button>
+                    <button className="icon-button" onClick={() => setInfoTrackId(track.id)} aria-label={`Open words for ${track.title}`} type="button">
+                      <InfoIcon />
                     </button>
                     {track.mp3Url && (
-                      <a className="download-button compact" href={downloadTrackHref(site, track)}>
-                        MP3
+                      <a className="icon-button" href={downloadTrackHref(site, track)} aria-label={`Download MP3 for ${track.title}`}>
+                        <DownloadIcon />
                       </a>
                     )}
                   </div>
                 </div>
-                {expanded && (
-                  <div className="track-detail">
-                    <div className="detail-toolbar">
-                      {track.sourceUrl && <a className="pill" href={track.sourceUrl}>Suno Track</a>}
-                      {track.videoUrl && <a className="pill" href={track.videoUrl}>Video</a>}
-                    </div>
-                    <div className="lyrics-reader">
-                      {lyricRows(track).map((line) => (
-                        line.text
-                          ? <p className={line.direction ? 'lyric-direction' : ''} key={line.id}>{line.text}</p>
-                          : <div className="lyric-break" key={line.id} />
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="production-caption">
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <strong>{track.title}</strong>
+                  <em>{formatDuration(track.durationSeconds)}</em>
+                </div>
               </article>
             );
           })}
-          {tracks.length === 0 && <p className="empty-state">No matching lyrics found.</p>}
+          {tracks.length === 0 && <p className="empty-state">No matching words found.</p>}
         </div>
       </section>
 
-      <section className="apple-music-note">
-        <strong>Apple Music</strong>
-        <span>Download All includes every MP3, a playlist file, and import instructions. After download, unzip it and import the folder or `RollinDD.m3u` into Apple Music.</span>
+      <section className="download-section">
+        <div>
+          <div className="kicker">Download</div>
+          <h2>All MP3s</h2>
+        </div>
+        <a className={downloadableCount ? 'download-button' : 'download-button disabled'} href={downloadableCount ? downloadAllHref(site) : undefined}>
+          <DownloadIcon /> Download All
+        </a>
       </section>
+
+      <section className="now-playing-dock" aria-label="Player">
+        <div>
+          <span>Now playing</span>
+          <strong>{selectedTrack?.title || 'Choose a production'}</strong>
+        </div>
+        <audio
+          ref={audioRef}
+          src={selectedTrack?.audioUrl}
+          controls
+          preload="metadata"
+          onEnded={playNext}
+        />
+      </section>
+
+      {infoTrack && (
+        <section className="words-overlay" role="dialog" aria-modal="true" aria-label={`Words for ${infoTrack.title}`}>
+          {infoTrack.videoUrl ? (
+            <video
+              className="words-video-bg"
+              src={infoTrack.videoUrl}
+              poster={infoTrack.coverImageUrl}
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
+          ) : (
+            <div className="words-still-bg" style={{ backgroundImage: `url(${infoTrack.coverImageUrl})` }} />
+          )}
+          <div className="words-shade" />
+          <div className="words-panel">
+            <div className="words-header">
+              <div>
+                <div className="kicker">Production {String(infoTrack.sortOrder).padStart(2, '0')}</div>
+                <h2>{infoTrack.title}</h2>
+              </div>
+              <button className="icon-button close-button" onClick={() => setInfoTrackId(null)} aria-label="Close" type="button">
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="words-actions">
+              <button className="pill action-pill" onClick={() => playTrack(infoTrack)} type="button">
+                <PlayIcon /> Play
+              </button>
+              {infoTrack.mp3Url && (
+                <a className="download-button compact" href={downloadTrackHref(site, infoTrack)}>
+                  <DownloadIcon /> MP3
+                </a>
+              )}
+              {infoTrack.sourceUrl && <a className="pill" href={infoTrack.sourceUrl}>Suno</a>}
+            </div>
+            <div className="words-reader">
+              {wordRows(infoTrack).map((line) => (
+                line.pause
+                  ? <div className="word-break" key={line.id} />
+                  : <p key={line.id}>{line.text}</p>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
     </main>
   );
 }

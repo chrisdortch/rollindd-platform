@@ -12,15 +12,19 @@ function isProductionRuntime() {
 
 export function getAdminAuthStatus() {
   const configured = Boolean(process.env.ROLLINDD_ADMIN_SECRET);
+  const pinConfigured = Boolean(process.env.ROLLINDD_ADMIN_PIN);
   const required = configured || isProductionRuntime();
 
   return {
     configured,
     required,
     headerName: adminHeaderName,
+    pinEnabled: pinConfigured,
     mode: configured ? 'secret-configured' : required ? 'secret-required' : 'local-open',
     message: configured
-      ? 'Admin write actions require the RollinDD admin secret.'
+      ? pinConfigured
+        ? 'Admin write actions require the RollinDD admin PIN.'
+        : 'Admin write actions require setup before PIN unlock is available.'
       : required
         ? 'ROLLINDD_ADMIN_SECRET is not configured; admin write actions are blocked.'
         : 'Admin write actions are open for local development.'
@@ -50,6 +54,11 @@ export function isValidAdminSecret(secret: string) {
   return Boolean(expected && secret && safeCompare(secret, expected));
 }
 
+export function isValidAdminPin(pin: string) {
+  const expected = process.env.ROLLINDD_ADMIN_PIN || '';
+  return Boolean(expected && pin && safeCompare(pin.trim(), expected));
+}
+
 export function requireAdminSecret(request: NextRequest) {
   const status = getAdminAuthStatus();
   const expected = process.env.ROLLINDD_ADMIN_SECRET || '';
@@ -74,7 +83,7 @@ export function requireAdminSecret(request: NextRequest) {
     return NextResponse.json(
       {
         status: 'unauthorized',
-        error: 'Admin secret is missing or invalid.'
+        error: 'Admin session is missing or invalid.'
       },
       { status: 401 }
     );

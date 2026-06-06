@@ -12,8 +12,8 @@ Suno playlist: ${defaultPlaylistUrl}
 Domain: rollindd-platform.vercel.app
 Theme instruction: fearlessness, love, wisdom, patience, collaboration, competition, luminous cinematic resilience
 Artist names: hide
-Lyrics search: enabled
-Exact match: enabled
+Words search: enabled
+Quoted line search: enabled
 Download all MP3s: capability_check
 Budget mode: lowest cost
 Autonomy: safe_max`;
@@ -31,6 +31,7 @@ type PlatformStatus = {
     configured: boolean;
     required: boolean;
     headerName: string;
+    pinEnabled?: boolean;
     mode: string;
     message: string;
   };
@@ -81,7 +82,7 @@ export function AdminCommand() {
   const [result, setResult] = useState<CommandResult | null>(null);
   const [schemaResult, setSchemaResult] = useState<SchemaResult | null>(null);
   const [rawResult, setRawResult] = useState('');
-  const [adminSecret, setAdminSecret] = useState('');
+  const [adminPin, setAdminPin] = useState('');
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [platformStatus, setPlatformStatus] = useState<PlatformStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,7 +92,7 @@ export function AdminCommand() {
 
   const adminSecretRequired = Boolean(platformStatus?.admin.required);
   const adminUnlocked = !adminSecretRequired || Boolean(sessionStatus?.authenticated);
-  const canUseAdminActions = adminUnlocked || adminSecret.trim().length > 0;
+  const canUseAdminActions = adminUnlocked;
 
   async function refreshStatus() {
     setStatusLoading(true);
@@ -172,10 +173,6 @@ export function AdminCommand() {
     };
   }, []);
 
-  function adminHeaders(): Record<string, string> {
-    return adminSecret.trim() ? { 'x-rollindd-admin-secret': adminSecret.trim() } : {};
-  }
-
   async function refreshSession() {
     const response = await fetch('/api/admin/session');
     const json = await response.json();
@@ -189,11 +186,11 @@ export function AdminCommand() {
       const response = await fetch('/api/admin/session', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ secret: adminSecret })
+        body: JSON.stringify({ pin: adminPin })
       });
       const json = await response.json();
       setSessionStatus(json);
-      if (response.ok) setAdminSecret('');
+      if (response.ok) setAdminPin('');
       setRawResult(JSON.stringify(json, null, 2));
     } finally {
       setSessionLoading(false);
@@ -204,7 +201,7 @@ export function AdminCommand() {
     setSessionLoading(true);
     try {
       await fetch('/api/admin/session', { method: 'DELETE' });
-      setAdminSecret('');
+      setAdminPin('');
       await refreshSession();
     } finally {
       setSessionLoading(false);
@@ -214,7 +211,7 @@ export function AdminCommand() {
   async function runCommand() {
     setLoading(true);
     try {
-      const response = await fetch('/api/central-command', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ command }) });
+      const response = await fetch('/api/central-command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command }) });
       const json = await response.json();
       setResult(json);
       setRawResult(JSON.stringify(json, null, 2));
@@ -228,7 +225,7 @@ export function AdminCommand() {
   async function applySchema() {
     setSchemaLoading(true);
     try {
-      const response = await fetch('/api/admin/apply-schema', { method: 'POST', headers: adminHeaders() });
+      const response = await fetch('/api/admin/apply-schema', { method: 'POST' });
       const json = await response.json();
       setSchemaResult(json);
       setRawResult(JSON.stringify(json, null, 2));
@@ -287,7 +284,7 @@ export function AdminCommand() {
               {platformStatus.release.branch && <span className="mono-chip">{platformStatus.release.branch}</span>}
               {platformStatus.release.commit && <span className="mono-chip">{platformStatus.release.commit}</span>}
               <span className="mono-chip">{platformStatus.database.schemaReady ? 'schema ready' : 'schema pending'}</span>
-              <span className="mono-chip">{platformStatus.admin.configured ? 'admin secret set' : 'admin secret missing'}</span>
+              <span className="mono-chip">{platformStatus.admin.configured ? 'admin access set' : 'admin access missing'}</span>
             </div>
             {!platformStatus.database.schemaReady && (
               <div className="next-action-box">
@@ -309,32 +306,32 @@ export function AdminCommand() {
             <div className="status-box">Cover Art<br/><strong>check</strong></div>
             <div className="status-box">Video<br/><strong>if available</strong></div>
             <div className="status-box">Audio<br/><strong>if available</strong></div>
-            <div className="status-box">Lyrics<br/><strong>indexed</strong></div>
+            <div className="status-box">Words<br/><strong>indexed</strong></div>
           </div>
         </section>
         <section className="command-panel">
           <div className="kicker">Settings</div>
-          {['Embed cover/video/audio','Hide artist names','Enable lyric search','Exact match search','Lazy-load covers top-to-bottom'].map((item) => <div className="toggle-row" key={item}><span>{item}</span><span className="toggle on"><span /></span></div>)}
+          {['Embed cover/video/audio','Hide artist names','Enable word search','Quoted line search','Lazy-load covers top-to-bottom'].map((item) => <div className="toggle-row" key={item}><span>{item}</span><span className="toggle on"><span /></span></div>)}
         </section>
       </div>
       <section className="command-panel">
         <div className="section-row" style={{ marginTop: 0 }}>
           <div>
             <div className="kicker">Admin Access</div>
-            <h2>{adminUnlocked ? 'Admin session is unlocked.' : platformStatus?.admin.configured ? 'Unlock admin once.' : 'Admin key is not configured.'}</h2>
+            <h2>{adminUnlocked ? 'Admin session is unlocked.' : platformStatus?.admin.pinEnabled ? 'Enter admin PIN.' : 'Admin PIN is not configured.'}</h2>
           </div>
-          <button className="ghost-button" onClick={lockAdmin} disabled={sessionLoading || (!adminSecret && !sessionStatus?.authenticated)}>Lock</button>
+          <button className="ghost-button" onClick={lockAdmin} disabled={sessionLoading || (!adminPin && !sessionStatus?.authenticated)}>Lock</button>
         </div>
         <div className="input-row">
-          <input type="password" value={adminSecret} onChange={(event) => setAdminSecret(event.target.value)} placeholder={adminUnlocked ? 'Admin session active' : 'ROLLINDD_ADMIN_SECRET'} />
-          <button className="ghost-button" onClick={unlockAdmin} disabled={sessionLoading || !adminSecret.trim()}>
+          <input type="password" inputMode="numeric" pattern="[0-9]*" value={adminPin} onChange={(event) => setAdminPin(event.target.value)} placeholder={adminUnlocked ? 'Admin session active' : 'PIN'} />
+          <button className="ghost-button" onClick={unlockAdmin} disabled={sessionLoading || !adminPin.trim()}>
             {sessionLoading ? 'Unlocking...' : 'Unlock'}
           </button>
           <button className="ghost-button" onClick={applySchema} disabled={schemaLoading || !platformStatus?.database.configured || platformStatus.database.schemaReady || !canUseAdminActions}>
             {schemaLoading ? 'Applying...' : 'Apply Schema'}
           </button>
         </div>
-        <p className="helper">{adminUnlocked ? 'This browser can run admin actions without repasting the secret.' : platformStatus?.admin.message}</p>
+        <p className="helper">{adminUnlocked ? 'This browser can run admin actions without repasting anything.' : platformStatus?.admin.message}</p>
         {schemaResult && (
           <div className="detail-list">
             <strong>Schema</strong>
