@@ -65,6 +65,7 @@ export type Site = {
 
 export type CentralCommandResult = {
   status: 'completed' | 'needs_user_action' | 'failed';
+  persistence: 'database' | 'demo-fallback';
   parsed: Record<string, unknown>;
   completed: string[];
   nextSteps: string[];
