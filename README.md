@@ -11,7 +11,9 @@ This starter includes:
 - Admin Central Command screen.
 - Suno Fetch adapter with public-parse attempt and safe demo fallback.
 - Theme generation heuristics from lyric corpus.
-- SQL schema for future Neon/Vercel Postgres persistence.
+- Optional Neon/Vercel Postgres persistence for sites, tracks, domains, commands, and generated themes.
+- Admin write-action protection with `ROLLINDD_ADMIN_SECRET`.
+- Platform readiness checks at `/admin`, `/api/health`, and `/api/platform-status`.
 
 ## Safe isolation
 
@@ -50,13 +52,23 @@ Autonomy: safe_max
 
 ## Recommended deployment path
 
-1. Create a new GitHub repo named `rollindd-platform` under `chrisdortch`.
-2. Upload this starter project into that repo.
-3. In Vercel, create/import a new project named `rollindd-platform` connected only to `chrisdortch/rollindd-platform`.
-4. Deploy.
-5. Test the Vercel preview URL on iPhone Safari and desktop.
-6. Add a Neon Postgres database only when persistence is needed.
-7. Add custom domains only after preview approval.
+1. Keep the GitHub repo scoped to `chrisdortch/rollindd-platform`.
+2. Keep the Vercel project scoped to `rollindd-platform`.
+3. Deploy from `main`.
+4. Test the Vercel preview URL on iPhone Safari and desktop.
+5. Set `ROLLINDD_ADMIN_SECRET` in Vercel before enabling admin write actions.
+6. Add a Neon or Vercel Postgres database when persistence is needed.
+7. Apply `sql/schema.sql` from `/admin` or through the database console.
+8. Add custom domains only after preview approval.
+
+## Production readiness
+
+- GitHub source: `chrisdortch/rollindd-platform`.
+- Vercel project: `rollindd-platform`.
+- Production admin writes require `ROLLINDD_ADMIN_SECRET`.
+- Without `POSTGRES_URL`, RollinDD serves demo fallback data and skips database writes.
+- With `POSTGRES_URL` and schema applied, Central Command saves site, track, and command records.
+- Domain moves, DNS changes, media downloads, and paid services remain approval-gated.
 
 ## Current limitations
 
@@ -64,8 +76,6 @@ The Suno Fetch adapter is deliberately conservative. It attempts to parse public
 
 ## Next implementation milestones
 
-- Real database persistence for sites, tracks, commands, domains, and themes.
-- Admin authentication.
 - Cloudflare R2 or Vercel Blob asset storage.
 - Vercel domain automation via API.
 - ZIP generation for Download All MP3s only when files and rights are confirmed.

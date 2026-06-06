@@ -9,7 +9,7 @@ RollinDD is a multi-tenant AI-assisted music website platform. Each website is p
 - One Vercel project powers many sites.
 - Each custom domain maps to a site record.
 - Each site stores its playlist URL, track metadata, lyrics, theme, and domain state.
-- Neon/Vercel Postgres is the planned persistence layer.
+- Neon/Vercel Postgres is the optional persistence layer.
 - Cloudflare R2 or Vercel Blob is recommended for hosted images/media if needed.
 - Google Drive can be used as an optional admin import/backup source, not the primary public CDN.
 
@@ -17,16 +17,16 @@ RollinDD is a multi-tenant AI-assisted music website platform. Each website is p
 
 Central Command is the operator interface. The user types a command such as `ROLLINDD LAUNCH`, and the system parses it into technical actions.
 
-Central Command should eventually perform these safe actions:
+Central Command currently performs these safe actions:
 
-1. Verify correct GitHub/Vercel/database/storage connections.
+1. Check database and admin readiness through `/api/platform-status`.
 2. Confirm no existing non-RollinDD projects are affected.
 3. Create/update a site record.
 4. Fetch playlist data from Suno where possible.
 5. Analyze the full lyric corpus.
 6. Generate a theme JSON object.
 7. Build a lyric search index.
-8. Create a Vercel preview deployment.
+8. Save site, track, and command records when Postgres is configured and the schema is ready.
 9. Prepare domain assignment and DNS instructions.
 10. Stop for user approval before live domain moves, paid services, rights-sensitive downloads, or destructive changes.
 
@@ -83,6 +83,8 @@ Lyric analysis should extract:
 - Approve generated theme.
 - Assign domain.
 - Launch safely.
+- Apply the database schema when Postgres is connected.
+- Use `ROLLINDD_ADMIN_SECRET` for production write actions.
 
 ## Safety rules
 

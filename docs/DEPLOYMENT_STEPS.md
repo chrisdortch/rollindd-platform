@@ -1,35 +1,19 @@
-# Exact Deployment Steps
+# RollinDD Deployment Steps
 
-## Step 1 — Create GitHub repo
+## Current connected resources
 
-1. Open https://github.com/new
-2. Repository owner: `chrisdortch`
-3. Repository name: `rollindd-platform`
-4. Visibility: Private is recommended while building.
-5. Do not add README/license/gitignore if uploading this starter as-is.
-6. Click **Create repository**.
-7. Return to ChatGPT and say: `ROLLINDD REPO READY`.
+- GitHub repo: `chrisdortch/rollindd-platform`
+- Vercel project: `rollindd-platform`
+- Default branch: `main`
+- Framework: Next.js
 
-## Step 2 — Upload starter code
+## Step 1 - Deploy from GitHub
 
-Option A: Let ChatGPT write files through the GitHub connector after repo exists.
+1. Commit changes to `main`.
+2. Let Vercel deploy from the connected GitHub project.
+3. Confirm the deployment reaches `READY`.
 
-Option B: Upload the zip manually:
-
-1. Unzip `rollindd-platform-starter.zip`.
-2. Upload all files to GitHub, or use GitHub Desktop.
-3. Commit to `main`.
-
-## Step 3 — Create Vercel project
-
-1. Open https://vercel.com/new
-2. Import `chrisdortch/rollindd-platform`.
-3. Project name: `rollindd-platform`.
-4. Framework preset: Next.js.
-5. Leave environment variables blank for first demo deploy.
-6. Click **Deploy**.
-
-## Step 4 — Test preview
+## Step 2 - Test preview
 
 Open the Vercel deployment URL.
 
@@ -41,13 +25,26 @@ Check:
 - Exact-match toggle works.
 - Tapping a track opens full-screen player.
 - `/admin` opens Central Command.
-- Fetch button returns a result.
+- `/api/health` returns `ok: true`.
+- Fetch button returns a result without private Suno credentials.
 
-## Step 5 — Add database later
+## Step 3 - Protect admin writes
 
-Use Neon or Vercel Postgres when persistence is needed. Apply `sql/schema.sql`, then add `POSTGRES_URL` and related environment variables in Vercel.
+1. Add `ROLLINDD_ADMIN_SECRET` in Vercel project environment variables.
+2. Redeploy if Vercel does not automatically refresh the runtime.
+3. Enter the same secret in `/admin` before running write actions.
 
-## Step 6 — Add first domain
+## Step 4 - Add database persistence
+
+Use Neon or Vercel Postgres when persistence is needed.
+
+1. Add `POSTGRES_URL` and related Postgres variables in Vercel.
+2. Open `/admin`.
+3. Enter `ROLLINDD_ADMIN_SECRET`.
+4. Press **Apply Schema**, or apply `sql/schema.sql` from the database console.
+5. Recheck readiness in `/admin` or `/api/platform-status`.
+
+## Step 5 - Add first domain
 
 Only after preview approval:
 

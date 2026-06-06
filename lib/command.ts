@@ -64,6 +64,7 @@ export function parseCentralCommand(raw: string) {
 export async function runCentralCommand(raw: string): Promise<CentralCommandResult> {
   const parsed = parseCentralCommand(raw);
   const values = parsed.values as Record<string, string>;
+  const databaseConfigured = isDatabaseConfigured();
 
   const themePrompt = values.theme_instruction || values.theme || '';
   const playlistUrl = values.new_suno_playlist || values.suno_playlist || values.playlist || '';
@@ -104,8 +105,7 @@ export async function runCentralCommand(raw: string): Promise<CentralCommandResu
     'Use /admin to run another Central Command update.',
     domain
       ? `When ready, assign ${domain} in Vercel and follow DNS verification.`
-      : 'Choose the first custom domain when you are ready.',
-    'Connect Postgres and apply sql/schema.sql when you are ready for persistent multi-site storage.'
+      : 'Choose the first custom domain when you are ready.'
   ];
 
   const riskNotes = [
@@ -118,13 +118,14 @@ export async function runCentralCommand(raw: string): Promise<CentralCommandResu
   let resultSite = site;
   let status: CentralCommandResult['status'] = 'needs_user_action';
 
-  if (isDatabaseConfigured()) {
+  if (databaseConfigured) {
     try {
       resultSite = await saveSiteWithTracks(site);
       persistence = 'database';
       status = 'completed';
       completed.push('Saved site and track records to Postgres.');
       completed.push('Recorded matching tracks without deleting stale playlist data.');
+      nextSteps.push(`Review the persisted site at /sites/${resultSite.slug}.`);
       if (domain) {
         riskNotes.push(`Stored ${domain} as the desired primary domain only; Vercel domain assignment still requires approval.`);
       }
@@ -135,9 +136,10 @@ export async function runCentralCommand(raw: string): Promise<CentralCommandResu
     }
   } else {
     completed.push('Skipped database writes because POSTGRES_URL is not configured.');
+    nextSteps.push('Connect Postgres and apply sql/schema.sql when you are ready for persistent multi-site storage.');
   }
 
-  if (isDatabaseConfigured()) {
+  if (databaseConfigured) {
     try {
       await recordCommandRun({
         commandType: parsed.action,
