@@ -34,6 +34,55 @@ export function isDatabaseConfigured() {
   return Boolean(process.env.POSTGRES_URL);
 }
 
+const requiredTables = ['sites', 'tracks', 'domains', 'commands', 'theme_generations'];
+
+export async function getDatabaseStatus() {
+  if (!isDatabaseConfigured()) {
+    return {
+      configured: false,
+      reachable: false,
+      schemaReady: false,
+      missingTables: requiredTables,
+      mode: 'demo-fallback' as const,
+      message: 'POSTGRES_URL is not configured; using demo fallback.'
+    };
+  }
+
+  try {
+    const result = await sql<{ table_name: string; exists: boolean }>`
+      select table_name, to_regclass('public.' || table_name) is not null as exists
+      from (values
+        ('sites'),
+        ('tracks'),
+        ('domains'),
+        ('commands'),
+        ('theme_generations')
+      ) as required(table_name)
+    `;
+    const missingTables = result.rows.filter((row) => !row.exists).map((row) => row.table_name);
+
+    return {
+      configured: true,
+      reachable: true,
+      schemaReady: missingTables.length === 0,
+      missingTables,
+      mode: missingTables.length === 0 ? 'database' as const : 'database-needs-schema' as const,
+      message: missingTables.length
+        ? `Database is reachable, but ${missingTables.join(', ')} table setup is missing.`
+        : 'Database is reachable and the RollinDD schema is ready.'
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      reachable: false,
+      schemaReady: false,
+      missingTables: requiredTables,
+      mode: 'database-error' as const,
+      message: error instanceof Error ? error.message : 'Database connection failed.'
+    };
+  }
+}
+
 function toSite(row: SiteRow, tracks: Track[]): Site {
   return {
     id: row.id,

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const defaultCommand = `ROLLINDD LAUNCH
 
@@ -16,26 +16,131 @@ Download all MP3s: capability_check
 Budget mode: lowest cost
 Autonomy: safe_max`;
 
+type PlatformStatus = {
+  mode: string;
+  database: {
+    configured: boolean;
+    reachable: boolean;
+    schemaReady: boolean;
+    missingTables: string[];
+    message: string;
+  };
+  release: {
+    environment: string;
+    branch: string;
+    commit: string;
+    deploymentUrl: string;
+  };
+  checks: Array<{ label: string; status: 'ready' | 'attention' | 'blocked'; detail: string }>;
+  nextActions: string[];
+};
+
+type CommandResult = {
+  status?: string;
+  persistence?: string;
+  completed?: string[];
+  nextSteps?: string[];
+  riskNotes?: string[];
+  site?: {
+    slug?: string;
+    title?: string;
+    primaryDomain?: string;
+    tracks?: unknown[];
+  };
+};
+
 export function AdminCommand() {
   const [command, setCommand] = useState(defaultCommand);
   const [url, setUrl] = useState('https://suno.com/playlist/example');
-  const [result, setResult] = useState<string>('');
+  const [result, setResult] = useState<CommandResult | null>(null);
+  const [rawResult, setRawResult] = useState('');
+  const [platformStatus, setPlatformStatus] = useState<PlatformStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(true);
+
+  async function refreshStatus() {
+    setStatusLoading(true);
+    try {
+      const response = await fetch('/api/platform-status');
+      const json = await response.json();
+      setPlatformStatus(json);
+    } catch (error) {
+      setPlatformStatus({
+        mode: 'unknown',
+        database: {
+          configured: false,
+          reachable: false,
+          schemaReady: false,
+          missingTables: [],
+          message: error instanceof Error ? error.message : 'Status check failed.'
+        },
+        release: { environment: '', branch: '', commit: '', deploymentUrl: '' },
+        checks: [{ label: 'Platform status', status: 'blocked', detail: 'Status check failed.' }],
+        nextActions: ['Refresh the admin page and retry the status check.']
+      });
+    } finally {
+      setStatusLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadInitialStatus() {
+      try {
+        const response = await fetch('/api/platform-status');
+        const json = await response.json();
+        if (mounted) setPlatformStatus(json);
+      } catch (error) {
+        if (mounted) {
+          setPlatformStatus({
+            mode: 'unknown',
+            database: {
+              configured: false,
+              reachable: false,
+              schemaReady: false,
+              missingTables: [],
+              message: error instanceof Error ? error.message : 'Status check failed.'
+            },
+            release: { environment: '', branch: '', commit: '', deploymentUrl: '' },
+            checks: [{ label: 'Platform status', status: 'blocked', detail: 'Status check failed.' }],
+            nextActions: ['Refresh the admin page and retry the status check.']
+          });
+        }
+      } finally {
+        if (mounted) setStatusLoading(false);
+      }
+    }
+
+    void loadInitialStatus();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   async function runCommand() {
     setLoading(true);
-    const response = await fetch('/api/central-command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command }) });
-    const json = await response.json();
-    setResult(JSON.stringify(json, null, 2));
-    setLoading(false);
+    try {
+      const response = await fetch('/api/central-command', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command }) });
+      const json = await response.json();
+      setResult(json);
+      setRawResult(JSON.stringify(json, null, 2));
+      await refreshStatus();
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function fetchPlaylist() {
     setLoading(true);
-    const response = await fetch('/api/fetch-suno', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playlistUrl: url }) });
-    const json = await response.json();
-    setResult(JSON.stringify(json, null, 2));
-    setLoading(false);
+    try {
+      const response = await fetch('/api/fetch-suno', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playlistUrl: url }) });
+      const json = await response.json();
+      setResult(null);
+      setRawResult(JSON.stringify(json, null, 2));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -50,6 +155,39 @@ export function AdminCommand() {
           <h1>Build the site from vision.</h1>
           <p className="lede">Paste a RollinDD command, or paste a Suno playlist and press Fetch. This starter runs safely in preview/demo mode until GitHub, Vercel, database, and storage are connected.</p>
         </div>
+      </section>
+      <section className="command-panel">
+        <div className="section-row" style={{ marginTop: 0 }}>
+          <div>
+            <div className="kicker">Platform Readiness</div>
+            <h2>{platformStatus?.mode === 'database' ? 'Database mode is ready.' : 'Demo fallback is active.'}</h2>
+          </div>
+          <button className="ghost-button" onClick={refreshStatus} disabled={statusLoading}>{statusLoading ? 'Checking...' : 'Recheck'}</button>
+        </div>
+        {platformStatus && (
+          <>
+            <div className="readiness-grid">
+              {platformStatus.checks.map((check) => (
+                <div className="readiness-card" key={check.label}>
+                  <div className={`status-line status-${check.status}`}><span />{check.status}</div>
+                  <h3>{check.label}</h3>
+                  <p>{check.detail}</p>
+                </div>
+              ))}
+            </div>
+            <div className="release-row">
+              <span className="mono-chip">{platformStatus.release.environment || 'local'}</span>
+              {platformStatus.release.branch && <span className="mono-chip">{platformStatus.release.branch}</span>}
+              {platformStatus.release.commit && <span className="mono-chip">{platformStatus.release.commit}</span>}
+              <span className="mono-chip">{platformStatus.database.schemaReady ? 'schema ready' : 'schema pending'}</span>
+            </div>
+            {!platformStatus.database.schemaReady && (
+              <div className="next-action-box">
+                {platformStatus.nextActions.map((item) => <span key={item}>{item}</span>)}
+              </div>
+            )}
+          </>
+        )}
       </section>
       <div className="two-col">
         <section className="command-panel">
@@ -76,7 +214,23 @@ export function AdminCommand() {
         <textarea rows={12} value={command} onChange={(e) => setCommand(e.target.value)} />
         <p className="helper">The command result will tell you completed actions, risk notes, and exact next steps.</p>
       </section>
-      {result && <section className="command-panel"><h2>Result</h2><pre className="command-result">{result}</pre></section>}
+      {(result || rawResult) && (
+        <section className="command-panel">
+          <h2>Result</h2>
+          {result && (
+            <div className="result-summary">
+              <div className="status-box">Status<br/><strong>{result.status || 'unknown'}</strong></div>
+              <div className="status-box">Persistence<br/><strong>{result.persistence || 'n/a'}</strong></div>
+              <div className="status-box">Site<br/><strong>{result.site?.slug || 'preview'}</strong></div>
+              <div className="status-box">Tracks<br/><strong>{result.site?.tracks?.length || 0}</strong></div>
+            </div>
+          )}
+          {result?.completed?.length ? <div className="detail-list"><strong>Completed</strong>{result.completed.map((item) => <span key={item}>{item}</span>)}</div> : null}
+          {result?.nextSteps?.length ? <div className="detail-list"><strong>Next Steps</strong>{result.nextSteps.map((item) => <span key={item}>{item}</span>)}</div> : null}
+          {result?.riskNotes?.length ? <div className="detail-list"><strong>Risk Notes</strong>{result.riskNotes.map((item) => <span key={item}>{item}</span>)}</div> : null}
+          <pre className="command-result">{rawResult}</pre>
+        </section>
+      )}
     </div>
   );
 }
