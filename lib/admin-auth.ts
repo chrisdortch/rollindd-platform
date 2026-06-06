@@ -3,6 +3,8 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 const adminHeaderName = 'x-rollindd-admin-secret';
+export const adminSessionCookieName = 'rollindd-admin-session';
+const sessionPurpose = 'rollindd-admin-session:v1';
 
 function isProductionRuntime() {
   return process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production';
@@ -32,6 +34,22 @@ function safeCompare(value: string, expected: string) {
   return crypto.timingSafeEqual(valueBuffer, expectedBuffer);
 }
 
+export function adminSessionValue(secret = process.env.ROLLINDD_ADMIN_SECRET || '') {
+  if (!secret) return '';
+  return crypto.createHmac('sha256', secret).update(sessionPurpose).digest('base64url');
+}
+
+export function hasValidAdminSession(request: NextRequest) {
+  const expected = adminSessionValue();
+  const provided = request.cookies.get(adminSessionCookieName)?.value || '';
+  return Boolean(expected && provided && safeCompare(provided, expected));
+}
+
+export function isValidAdminSecret(secret: string) {
+  const expected = process.env.ROLLINDD_ADMIN_SECRET || '';
+  return Boolean(expected && secret && safeCompare(secret, expected));
+}
+
 export function requireAdminSecret(request: NextRequest) {
   const status = getAdminAuthStatus();
   const expected = process.env.ROLLINDD_ADMIN_SECRET || '';
@@ -50,7 +68,9 @@ export function requireAdminSecret(request: NextRequest) {
   }
 
   const provided = request.headers.get(adminHeaderName) || '';
-  if (!safeCompare(provided, expected)) {
+  const authorizedByHeader = Boolean(provided && safeCompare(provided, expected));
+
+  if (!authorizedByHeader && !hasValidAdminSession(request)) {
     return NextResponse.json(
       {
         status: 'unauthorized',
