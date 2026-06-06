@@ -1,4 +1,5 @@
 import { ImageResponse } from 'next/og';
+import { headers } from 'next/headers';
 
 export const runtime = 'edge';
 export const alt = 'RollinDD Playlist Premiere';
@@ -8,7 +9,14 @@ export const size = {
 };
 export const contentType = 'image/png';
 
-export default function Image() {
+const firstProductionCover = 'https://cdn2.suno.ai/5ee44892-74e9-4df9-af0f-84423051331c_1169a304.jpeg';
+
+export default async function Image() {
+  const requestHeaders = await headers();
+  const host = requestHeaders.get('host') || 'rollindd-platform.vercel.app';
+  const protocol = host.includes('localhost') || host.startsWith('127.') ? 'http' : 'https';
+  const logoUrl = `${protocol}://${host}/brand/rollindd-eye.svg`;
+
   return new ImageResponse(
     (
       <div
@@ -16,79 +24,100 @@ export default function Image() {
           width: '100%',
           height: '100%',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: 64,
-          background: 'linear-gradient(135deg, #050608 0%, #12151a 50%, #071d26 100%)',
+          position: 'relative',
+          overflow: 'hidden',
+          background: '#050608',
           color: '#f7f1e3',
           fontFamily: 'Arial, Helvetica, sans-serif'
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 22, width: 680 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-            <div
-              style={{
-                width: 112,
-                height: 112,
-                display: 'flex',
-                flexDirection: 'column',
-                borderRadius: 999,
-                border: '4px solid #f2c75b',
-                background: 'linear-gradient(135deg, #f2b93d 0%, #f7f7f0 46%, #142b3d 48%, #050608 100%)',
-                boxShadow: '0 0 0 2px rgba(255,255,255,.62), 0 24px 70px rgba(215,168,79,.32)'
-              }}
-            >
-              <div
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 999,
-                  background: '#050608',
-                  marginLeft: 58,
-                  marginTop: 20
-                }}
-              />
-              <div
-                style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 999,
-                  background: '#ffd875',
-                  marginLeft: 28,
-                  marginTop: 12
-                }}
-              />
-            </div>
-            <div style={{ display: 'flex', fontSize: 64, fontWeight: 900, letterSpacing: 0 }}>
-              <span>RollinD</span>
-              <span style={{ color: '#ffd875' }}>D</span>
-            </div>
-          </div>
-          <div style={{ color: '#ffd875', fontSize: 30, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>
-            Playlist Premiere
-          </div>
-          <div style={{ fontSize: 58, lineHeight: 1.02, fontWeight: 900 }}>
-            Fearlessness, love, wisdom, patience, collaboration, and luminous resilience.
-          </div>
-          <div style={{ color: 'rgba(247,241,227,.7)', fontSize: 28 }}>
-            Play productions, read words, and download MP3s.
-          </div>
-        </div>
+        <img
+          src={firstProductionCover}
+          alt=""
+          width="1200"
+          height="630"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            opacity: .74
+          }}
+        />
         <div
           style={{
-            width: 310,
-            height: 470,
-            borderRadius: 26,
-            border: '2px solid rgba(255,255,255,.22)',
-            background: 'linear-gradient(180deg, rgba(255,216,117,.9), rgba(18,21,26,.88) 45%, rgba(6,7,9,.95))',
-            boxShadow: '0 35px 90px rgba(0,0,0,.38)',
+            position: 'absolute',
+            inset: 0,
             display: 'flex',
-            alignItems: 'flex-end',
-            padding: 28
+            background:
+              'linear-gradient(90deg, rgba(5,6,8,.94) 0%, rgba(5,6,8,.72) 39%, rgba(5,6,8,.16) 100%), linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.82))'
+          }}
+        />
+        <div
+          style={{
+            position: 'relative',
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: 58
           }}
         >
-          <div style={{ fontSize: 34, lineHeight: 1.05, fontWeight: 900 }}>
-            7 Productions
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 22, width: 610 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+              <img
+                src={logoUrl}
+                alt=""
+                width="96"
+                height="96"
+                style={{
+                  width: 96,
+                  height: 96,
+                  borderRadius: 999,
+                  objectFit: 'cover',
+                  background: '#050608',
+                  boxShadow: '0 0 0 2px rgba(255,255,255,.48), 0 20px 50px rgba(0,0,0,.48)'
+                }}
+              />
+              <div style={{ display: 'flex', fontSize: 62, fontWeight: 900, letterSpacing: 0 }}>
+                <span>RollinD</span>
+                <span style={{ color: '#ffd875' }}>D</span>
+              </div>
+            </div>
+            <div style={{ color: '#ffd875', fontSize: 28, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0 }}>
+              Playlist Premiere
+            </div>
+            <div style={{ fontSize: 56, lineHeight: 1.02, fontWeight: 900 }}>
+              I. The Essence of Fearlessness
+            </div>
+            <div style={{ color: 'rgba(247,241,227,.82)', fontSize: 28, lineHeight: 1.18 }}>
+              Fearlessness, love, wisdom, patience, collaboration, and luminous resilience.
+            </div>
+          </div>
+          <div
+            style={{
+              width: 322,
+              height: 500,
+              display: 'flex',
+              overflow: 'hidden',
+              borderRadius: 24,
+              border: '2px solid rgba(255,255,255,.34)',
+              boxShadow: '0 35px 95px rgba(0,0,0,.58)'
+            }}
+          >
+            <img
+              src={firstProductionCover}
+              alt=""
+              width="322"
+              height="500"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover'
+              }}
+            />
           </div>
         </div>
       </div>

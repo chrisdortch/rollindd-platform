@@ -203,6 +203,10 @@ h3 { font-size: 18px; line-height: 1.18; }
   border-color: rgba(255,255,255,.8);
   box-shadow: 0 0 0 1px rgba(255,255,255,.75), 0 0 26px rgba(255,255,255,.12);
 }
+.production-card.loading,
+.production-card.downloading {
+  border-color: rgba(255, 216, 117, .78);
+}
 .production-thumb {
   position: relative;
   overflow: hidden;
@@ -300,6 +304,61 @@ h3 { font-size: 18px; line-height: 1.18; }
   justify-content: space-between;
   gap: 8px;
 }
+.thumb-status {
+  position: absolute;
+  z-index: 5;
+  left: 8px;
+  right: 8px;
+  bottom: 42px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.thumb-status span {
+  padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(0,0,0,.62);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  backdrop-filter: blur(10px);
+}
+.thumb-status.is-download span {
+  color: #071010;
+  background: rgba(255,216,117,.92);
+}
+.thumb-progress,
+.player-progress {
+  position: absolute;
+  overflow: hidden;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.16);
+}
+.thumb-progress {
+  z-index: 5;
+  left: 8px;
+  right: 8px;
+  bottom: 36px;
+}
+.thumb-progress::after,
+.player-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -45%;
+  width: 45%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, #ffd875, transparent);
+  animation: rollindd-progress 1.1s ease-in-out infinite;
+}
+@keyframes rollindd-progress {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(325%); }
+}
 .icon-button {
   width: 42px;
   height: 42px;
@@ -316,6 +375,11 @@ h3 { font-size: 18px; line-height: 1.18; }
   border-color: #fff;
   outline: none;
   background: rgba(255,255,255,.16);
+}
+.icon-button.is-loading,
+.download-button.is-loading {
+  color: #071010;
+  background: #ffd875;
 }
 .icon-button svg,
 .download-button svg,
@@ -395,6 +459,20 @@ h3 { font-size: 18px; line-height: 1.18; }
   border: 1px solid transparent;
 }
 .download-button.disabled { pointer-events: none; opacity: .5; }
+.download-button.is-loading {
+  position: relative;
+  overflow: hidden;
+}
+.download-button.is-loading::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 7px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(7,16,16,.22);
+}
 
 .now-playing-dock {
   position: fixed;
@@ -426,6 +504,15 @@ h3 { font-size: 18px; line-height: 1.18; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.now-playing-dock > div:first-child {
+  position: relative;
+  padding-bottom: 6px;
+}
+.player-progress {
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 .now-playing-dock audio { width: 100%; }
 .player-control-row {
@@ -688,7 +775,27 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .shell { padding-inline: 10px; }
   .brand-eye { width: 54px; height: 54px; }
   .wordmark { font-size: 22px; }
-  .nav-pills { gap: 6px; }
+  .nav-pills {
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: 5px;
+  }
+  .nav-pills .pill,
+  .nav-pills .admin-chip,
+  .nav-pills .download-button {
+    min-height: 40px;
+    padding-inline: 8px;
+    font-size: 13px;
+  }
+  .nav-pills .action-pill,
+  .nav-pills .download-button {
+    gap: 6px;
+  }
+  .nav-pills .action-pill svg,
+  .nav-pills .download-button svg {
+    width: 17px;
+    height: 17px;
+  }
   .pill, .admin-chip, .tool-button, .download-button { padding-inline: 10px; }
   .production-caption { grid-template-columns: auto minmax(0, 1fr); }
   .production-caption em { display: none; }

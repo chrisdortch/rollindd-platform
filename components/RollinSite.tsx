@@ -8,6 +8,11 @@ import type { Site, Track } from '@/lib/types';
 import { searchLyrics } from '@/lib/search';
 
 type ViewMode = 'showcase' | 'grid';
+type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
+type DownloadStatus =
+  | { kind: 'all'; label: string }
+  | { kind: 'track'; trackId: string; label: string }
+  | null;
 type AirPlayAudioElement = HTMLAudioElement & {
   webkitShowPlaybackTargetPicker?: () => void;
 };
@@ -137,23 +142,43 @@ export function RollinSite({ site }: { site: Site }) {
     [site.tracks]
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playAttemptRef = useRef(0);
+  const downloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [query, setQuery] = useState('');
   const [selectedTrack, setSelectedTrack] = useState<Track | undefined>();
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playIntentTrackId, setPlayIntentTrackId] = useState<string | null>(null);
+  const [playerStatus, setPlayerStatus] = useState<PlayerStatus>('idle');
+  const [playerMessage, setPlayerMessage] = useState('');
   const [infoTrackId, setInfoTrackId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
+  const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>(null);
 
   const exact = isExactSearch(query);
   const tracks = useMemo(
     () => searchLyrics(sortedTracks, query, exact),
     [exact, query, sortedTracks]
   );
+  const playableTracks = useMemo(
+    () => sortedTracks.filter((track) => track.audioUrl),
+    [sortedTracks]
+  );
   const downloadableCount = sortedTracks.filter((track) => track.downloadable && track.mp3Url).length;
-  const playableCount = sortedTracks.filter((track) => track.audioUrl).length;
-  const selectedIndex = selectedTrack ? sortedTracks.findIndex((track) => track.id === selectedTrack.id) : -1;
+  const playableCount = playableTracks.length;
+  const queueActive = playerStatus === 'playing';
   const infoTrack = sortedTracks.find((track) => track.id === infoTrackId);
+  const playerStatusLabel = selectedTrack
+    ? playerMessage || (
+        playerStatus === 'loading'
+          ? 'Loading MP3'
+          : playerStatus === 'playing'
+            ? 'Playing queue'
+            : playerStatus === 'paused'
+              ? 'Paused'
+              : playerStatus === 'error'
+                ? 'Playback needs a tap'
+                : 'Ready'
+      )
+    : 'Ready';
 
   useEffect(() => {
     if (!infoTrackId) return;
@@ -172,25 +197,61 @@ export function RollinSite({ site }: { site: Site }) {
     setAirPlayAvailable(typeof audio.webkitShowPlaybackTargetPicker === 'function');
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (downloadTimerRef.current) clearTimeout(downloadTimerRef.current);
+    };
+  }, []);
+
+  function flashDownloadStatus(status: Exclude<DownloadStatus, null>) {
+    if (downloadTimerRef.current) clearTimeout(downloadTimerRef.current);
+    setDownloadStatus(status);
+    downloadTimerRef.current = setTimeout(() => setDownloadStatus(null), 7000);
+  }
+
   function playTrack(track: Track) {
     if (!track.audioUrl) return;
+    const attempt = playAttemptRef.current + 1;
+    playAttemptRef.current = attempt;
     setSelectedTrack(track);
-    setPlayIntentTrackId(track.id);
+    setPlayerStatus('loading');
+    setPlayerMessage(`Loading ${track.title}`);
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio) {
+      setPlayerStatus('error');
+      setPlayerMessage('Player is not ready yet.');
+      return;
+    }
 
-    if (audio.src !== track.audioUrl) audio.src = track.audioUrl;
-    audio.play().catch(() => undefined);
+    if (audio.src !== track.audioUrl) {
+      audio.src = track.audioUrl;
+      audio.load();
+    }
+
+    audio.play().catch(() => {
+      setPlayerStatus('error');
+      setPlayerMessage('Tap play again to start audio.');
+    });
+
+    window.setTimeout(() => {
+      const currentAudio = audioRef.current;
+      if (playAttemptRef.current !== attempt || currentAudio !== audio) return;
+      if (currentAudio.src !== track.audioUrl || !currentAudio.paused || currentAudio.readyState < 2) return;
+      setPlayerStatus('paused');
+      setPlayerMessage('Ready - tap play');
+    }, 1400);
   }
 
   function pauseTrack() {
+    playAttemptRef.current += 1;
     audioRef.current?.pause();
-    setIsPlaying(false);
-    setPlayIntentTrackId(null);
+    setPlayerStatus(selectedTrack ? 'paused' : 'idle');
+    setPlayerMessage(selectedTrack ? 'Paused' : '');
   }
 
   function toggleTrack(track: Track) {
-    if (selectedTrack?.id === track.id && (isPlaying || playIntentTrackId === track.id)) {
+    const audio = audioRef.current;
+    if (selectedTrack?.id === track.id && queueActive && audio && !audio.paused) {
       pauseTrack();
       return;
     }
@@ -199,20 +260,25 @@ export function RollinSite({ site }: { site: Site }) {
   }
 
   function playAll() {
-    const firstPlayable = sortedTracks.find((track) => track.audioUrl);
-    if (firstPlayable) playTrack(firstPlayable);
+    if (queueActive) {
+      pauseTrack();
+      return;
+    }
+
+    const nextTrack = selectedTrack?.audioUrl ? selectedTrack : playableTracks[0];
+    if (nextTrack) playTrack(nextTrack);
   }
 
   function playNext() {
-    if (!sortedTracks.length) return;
-    const startIndex = selectedIndex >= 0 ? selectedIndex + 1 : 0;
-    for (let offset = 0; offset < sortedTracks.length; offset += 1) {
-      const nextTrack = sortedTracks[(startIndex + offset) % sortedTracks.length];
-      if (nextTrack.audioUrl) {
-        playTrack(nextTrack);
-        return;
-      }
+    if (!playableTracks.length) {
+      setPlayerStatus('idle');
+      setPlayerMessage('');
+      return;
     }
+
+    const currentIndex = selectedTrack ? playableTracks.findIndex((track) => track.id === selectedTrack.id) : -1;
+    const nextTrack = playableTracks[(currentIndex + 1) % playableTracks.length] || playableTracks[0];
+    playTrack(nextTrack);
   }
 
   function openAirPlayPicker() {
@@ -234,10 +300,17 @@ export function RollinSite({ site }: { site: Site }) {
           <BrandLockup />
           <nav className="nav-pills" aria-label="Site navigation">
             <button className="pill action-pill" onClick={playAll} disabled={!playableCount} type="button">
-              <PlayIcon /> Play All
+              {queueActive ? <PauseIcon /> : <PlayIcon />} {queueActive ? 'Pause' : 'Play All'}
             </button>
-            <a className={downloadableCount ? 'download-button nav-download' : 'download-button nav-download disabled'} href={downloadableCount ? downloadAllHref(site) : undefined}>
-              <DownloadIcon /> Download All
+            <a
+              className={[
+                downloadableCount ? 'download-button nav-download' : 'download-button nav-download disabled',
+                downloadStatus?.kind === 'all' ? 'is-loading' : ''
+              ].filter(Boolean).join(' ')}
+              href={downloadableCount ? downloadAllHref(site) : undefined}
+              onClick={() => flashDownloadStatus({ kind: 'all', label: 'Preparing ZIP download' })}
+            >
+              <DownloadIcon /> {downloadStatus?.kind === 'all' ? 'Preparing' : 'Download All'}
             </a>
             <Link className="pill" href="/admin">Admin</Link>
             <a className="admin-chip" href={site.sunoPlaylistUrl || '#'}>Suno</a>
@@ -283,10 +356,19 @@ export function RollinSite({ site }: { site: Site }) {
 
         <div className={`production-grid is-${viewMode}`}>
           {tracks.map((track, index) => {
-            const trackPlaying = selectedTrack?.id === track.id && (isPlaying || playIntentTrackId === track.id);
+            const trackSelected = selectedTrack?.id === track.id;
+            const trackLoading = trackSelected && playerStatus === 'loading';
+            const trackPlaying = trackSelected && queueActive;
+            const trackDownloading = downloadStatus?.kind === 'track' && downloadStatus.trackId === track.id;
             const buttonLabel = `${trackPlaying ? 'Pause' : 'Play'} ${track.title}`;
+            const cardClassName = [
+              'production-card',
+              trackPlaying ? 'playing' : '',
+              trackLoading ? 'loading' : '',
+              trackDownloading ? 'downloading' : ''
+            ].filter(Boolean).join(' ');
             return (
-              <article className={trackPlaying ? 'production-card playing' : 'production-card'} key={track.id}>
+              <article className={cardClassName} key={track.id}>
                 <div className={track.videoUrl ? 'production-thumb has-video' : 'production-thumb'}>
                   {track.videoUrl ? (
                     <video
@@ -311,17 +393,28 @@ export function RollinSite({ site }: { site: Site }) {
                   />
                   <div className="thumb-actions">
                     <button className="icon-button" onClick={() => toggleTrack(track)} aria-label={buttonLabel} type="button" disabled={!track.audioUrl}>
-                      {trackPlaying ? <PauseIcon /> : <PlayIcon />}
+                    {trackPlaying ? <PauseIcon /> : <PlayIcon />}
                     </button>
                     <button className="icon-button" onClick={() => setInfoTrackId(track.id)} aria-label={`Open words for ${track.title}`} type="button">
                       <InfoIcon />
                     </button>
                     {track.mp3Url && (
-                      <a className="icon-button" href={downloadTrackHref(site, track)} aria-label={`Download MP3 for ${track.title}`}>
+                      <a
+                        className={trackDownloading ? 'icon-button is-loading' : 'icon-button'}
+                        href={downloadTrackHref(site, track)}
+                        aria-label={`Download MP3 for ${track.title}`}
+                        onClick={() => flashDownloadStatus({ kind: 'track', trackId: track.id, label: `Preparing ${track.title}` })}
+                      >
                         <DownloadIcon />
                       </a>
                     )}
                   </div>
+                  {(trackLoading || trackDownloading) && (
+                    <div className={trackDownloading ? 'thumb-status is-download' : 'thumb-status'}>
+                      <span>{trackDownloading ? 'Preparing MP3' : 'Loading MP3'}</span>
+                    </div>
+                  )}
+                  {(trackLoading || trackDownloading) && <div className="thumb-progress" aria-hidden="true" />}
                   <div className="production-caption">
                     <span>{String(index + 1).padStart(2, '0')}</span>
                     <strong>{track.title}</strong>
@@ -337,8 +430,9 @@ export function RollinSite({ site }: { site: Site }) {
 
       <section className="now-playing-dock" aria-label="Player">
         <div>
-          <span>Now playing</span>
+          <span>{playerStatusLabel}</span>
           <strong>{selectedTrack?.title || 'Choose a production'}</strong>
+          {(playerStatus === 'loading' || downloadStatus) && <div className="player-progress" aria-hidden="true" />}
         </div>
         <div className="player-control-row">
           <audio
@@ -347,14 +441,45 @@ export function RollinSite({ site }: { site: Site }) {
             controls
             preload="metadata"
             onEnded={() => {
-              setPlayIntentTrackId(null);
               playNext();
             }}
-            onPause={() => setIsPlaying(false)}
-            onPlay={() => setIsPlaying(true)}
+            onPlay={() => {
+              if (selectedTrack) {
+                setPlayerStatus('loading');
+                setPlayerMessage(`Loading ${selectedTrack.title}`);
+              }
+            }}
+            onLoadStart={() => {
+              if (selectedTrack) {
+                setPlayerStatus('loading');
+                setPlayerMessage(`Loading ${selectedTrack.title}`);
+              }
+            }}
+            onCanPlay={() => {
+              const audio = audioRef.current;
+              if (selectedTrack && playerStatus === 'loading' && audio?.paused) {
+                setPlayerStatus('paused');
+                setPlayerMessage('Ready - tap play');
+              }
+            }}
+            onWaiting={() => {
+              if (selectedTrack) {
+                setPlayerStatus('loading');
+                setPlayerMessage(`Loading ${selectedTrack.title}`);
+              }
+            }}
+            onPause={() => {
+              if (audioRef.current?.ended) return;
+              setPlayerStatus(selectedTrack ? 'paused' : 'idle');
+              setPlayerMessage(selectedTrack ? 'Paused' : '');
+            }}
+            onPlaying={() => {
+              setPlayerStatus('playing');
+              setPlayerMessage('Playing queue');
+            }}
             onError={() => {
-              setIsPlaying(false);
-              setPlayIntentTrackId(null);
+              setPlayerStatus('error');
+              setPlayerMessage('Could not load MP3.');
             }}
           />
           <button
@@ -397,12 +522,19 @@ export function RollinSite({ site }: { site: Site }) {
             </div>
             <div className="words-actions">
               <button className="pill action-pill" onClick={() => toggleTrack(infoTrack)} type="button" disabled={!infoTrack.audioUrl}>
-                {selectedTrack?.id === infoTrack.id && (isPlaying || playIntentTrackId === infoTrack.id) ? <PauseIcon /> : <PlayIcon />}
-                {selectedTrack?.id === infoTrack.id && (isPlaying || playIntentTrackId === infoTrack.id) ? 'Pause' : 'Play'}
+                {selectedTrack?.id === infoTrack.id && queueActive ? <PauseIcon /> : <PlayIcon />}
+                {selectedTrack?.id === infoTrack.id && queueActive ? 'Pause' : 'Play'}
               </button>
               {infoTrack.mp3Url && (
-                <a className="download-button compact" href={downloadTrackHref(site, infoTrack)}>
-                  <DownloadIcon /> MP3
+                <a
+                  className={[
+                    'download-button compact',
+                    downloadStatus?.kind === 'track' && downloadStatus.trackId === infoTrack.id ? 'is-loading' : ''
+                  ].filter(Boolean).join(' ')}
+                  href={downloadTrackHref(site, infoTrack)}
+                  onClick={() => flashDownloadStatus({ kind: 'track', trackId: infoTrack.id, label: `Preparing ${infoTrack.title}` })}
+                >
+                  <DownloadIcon /> {downloadStatus?.kind === 'track' && downloadStatus.trackId === infoTrack.id ? 'Preparing' : 'MP3'}
                 </a>
               )}
               {infoTrack.sourceUrl && <a className="pill" href={infoTrack.sourceUrl}>Suno</a>}
