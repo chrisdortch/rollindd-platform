@@ -111,6 +111,7 @@ h2 { font-size: clamp(32px, 6vw, 60px); }
 .lyric-line { color:rgba(247,241,227,.62); font-size: clamp(20px,4vw,30px); }
 .lyric-current { color: var(--accent-2); font-family: Georgia, 'Times New Roman', serif; font-size: clamp(32px,7vw,62px); text-shadow: 0 0 35px rgba(215,168,79,.32); }
 .player-bottom { padding: 18px 0 14px; }
+.full-player video { width: min(100%, 900px); max-height: 50vh; border-radius: 18px; background: rgba(0,0,0,.38); }
 .progress { height: 4px; background: rgba(255,255,255,.16); border-radius:999px; overflow:hidden; margin: 12px 0 20px; }
 .progress span { display:block; height:100%; width:42%; background:linear-gradient(90deg,var(--accent),var(--accent-2)); }
 .segment { display:flex; gap:8px; justify-content:center; padding: 8px; border-radius:999px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); }
@@ -118,7 +119,7 @@ h2 { font-size: clamp(32px, 6vw, 60px); }
 .segment .active { color:#06101e; background:linear-gradient(135deg,#ffe08b,#b77b2d); }
 .search-card { padding: 18px; margin: 18px 0; }
 .search-results { display:grid; gap:12px; }
-.result-row { display:grid; grid-template-columns: 112px 1fr auto; gap:14px; align-items:center; padding:12px; border-radius:20px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04); }
+.result-row { display:grid; grid-template-columns: 112px 1fr auto; gap:14px; align-items:center; padding:12px; border-radius:20px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.04); color: var(--text); text-align: left; width: 100%; }
 .result-art { aspect-ratio:1/1; border-radius:16px; background-size:cover; background-position:center; }
 mark { background:transparent; color:var(--accent-2); font-weight:800; }
 .command-panel { padding: 18px; margin-top: 18px; }
@@ -130,6 +131,7 @@ mark { background:transparent; color:var(--accent-2); font-weight:800; }
 .toggle { width:52px; height:30px; border-radius:999px; background:rgba(255,255,255,.18); padding:3px; display:flex; justify-content:flex-start; }
 .toggle.on { background:linear-gradient(135deg,#ffe08b,#b77b2d); justify-content:flex-end; }
 .toggle span { width:24px; height:24px; border-radius:50%; background:white; display:block; }
+button:disabled { opacity: .58; cursor: not-allowed; }
 @media (max-width: 720px) {
   .shell { padding-inline: 12px; }
   .brand-lockup { letter-spacing: .28em; font-size: 11px; }
