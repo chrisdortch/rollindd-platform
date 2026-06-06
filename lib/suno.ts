@@ -1,6 +1,43 @@
 import type { Track } from './types';
 import { sampleTracks } from './sample-data';
 
+function collectStringPayloads(value: unknown, out: string[] = []) {
+  if (typeof value === 'string') {
+    out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStringPayloads(item, out));
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach((item) => collectStringPayloads(item, out));
+  }
+  return out;
+}
+
+function parseNextFlightPayloads(value: unknown) {
+  const parsed: unknown[] = [];
+  const flightText = collectStringPayloads(value).join('\n');
+  const rowPattern = /(?:^|\n)([0-9a-f]+):/gi;
+  const rows = [...flightText.matchAll(rowPattern)];
+
+  rows.forEach((row, index) => {
+    const start = (row.index || 0) + row[0].length;
+    const end = index + 1 < rows.length ? rows[index + 1].index || flightText.length : flightText.length;
+    const payload = flightText.slice(start, end).trim();
+    if (!payload || !/^[{["0-9tnf-]/.test(payload)) return;
+
+    try {
+      parsed.push(JSON.parse(payload));
+    } catch {
+      // Next Flight rows can contain references and partial frames. Skip rows that are not standalone JSON.
+    }
+  });
+
+  return parsed;
+}
+
 function findJsonObjects(html: string) {
   const scripts = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
   const jsons: unknown[] = [];
@@ -12,10 +49,21 @@ function findJsonObjects(html: string) {
     }
     const nextData = trimmed.match(/self\.__next_f\.push\((.*)\)/s);
     if (nextData) {
-      try { jsons.push(JSON.parse(nextData[1])); } catch {}
+      try {
+        const parsed = JSON.parse(nextData[1]);
+        jsons.push(parsed, ...parseNextFlightPayloads(parsed));
+      } catch {}
     }
   }
   return jsons;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function collectTracksFromAnyJson(value: unknown, out: Track[] = []): Track[] {
@@ -25,11 +73,13 @@ function collectTracksFromAnyJson(value: unknown, out: Track[] = []): Track[] {
     return out;
   }
   const record = value as Record<string, unknown>;
-  const title = typeof record.title === 'string' ? record.title : typeof record.name === 'string' ? record.name : undefined;
-  const lyrics = typeof record.lyrics === 'string' ? record.lyrics : typeof record.gpt_description_prompt === 'string' ? record.gpt_description_prompt : undefined;
-  const image = typeof record.image_url === 'string' ? record.image_url : typeof record.imageUrl === 'string' ? record.imageUrl : typeof record.cover_url === 'string' ? record.cover_url : undefined;
-  const audio = typeof record.audio_url === 'string' ? record.audio_url : typeof record.audioUrl === 'string' ? record.audioUrl : undefined;
-  const video = typeof record.video_url === 'string' ? record.video_url : typeof record.videoUrl === 'string' ? record.videoUrl : undefined;
+  const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata as Record<string, unknown> : {};
+  const audio = stringValue(record.audio_url) || stringValue(record.audioUrl);
+  const video = stringValue(record.video_url) || stringValue(record.videoUrl);
+  const title = stringValue(record.title) || (audio || video ? stringValue(record.name) : undefined);
+  const lyrics = stringValue(record.lyrics) || stringValue(record.gpt_description_prompt) || stringValue(metadata.prompt);
+  const image = stringValue(record.image_url) || stringValue(record.imageUrl) || stringValue(record.image_large_url) || stringValue(record.cover_url);
+  const duration = numberValue(record.duration_seconds) || numberValue(record.duration) || numberValue(metadata.duration);
   if (title && (image || audio || video || lyrics)) {
     const id = String(record.id || title.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
     if (!out.some((t) => t.id === id)) {
@@ -40,9 +90,11 @@ function collectTracksFromAnyJson(value: unknown, out: Track[] = []): Track[] {
         audioUrl: audio,
         mp3Url: audio,
         videoUrl: video,
+        durationSeconds: duration ? Math.round(duration) : undefined,
         lyrics: lyrics || '',
         sortOrder: out.length + 1,
         downloadable: Boolean(audio),
+        sourceUrl: id ? `https://suno.com/song/${id}` : undefined,
         mediaStatus: audio || video ? 'complete' : lyrics ? 'partial' : 'missing_audio'
       });
     }
