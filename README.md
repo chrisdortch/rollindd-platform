@@ -38,10 +38,10 @@ Open:
 ```text
 ROLLINDD LAUNCH
 
-Site name: Neon Rain
-Suno playlist: https://suno.com/playlist/example
-Domain: neonrain.com
-Theme instruction: cinematic cyberpunk heartbreak, rain, neon, spiritual resilience, gold-on-black luxury
+Site name: RollinDD
+Suno playlist: https://suno.com/playlist/782a2eb4-404b-47c3-b992-d5c2be81a5a0
+Domain: rollindd-platform.vercel.app
+Theme instruction: fearlessness, love, wisdom, patience, collaboration, competition, luminous cinematic resilience
 Artist names: hide
 Lyrics search: enabled
 Exact match: enabled
