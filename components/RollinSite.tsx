@@ -437,7 +437,6 @@ export function RollinSite({ site }: { site: Site }) {
         <div className="player-control-row">
           <audio
             ref={audioRef}
-            src={selectedTrack?.audioUrl}
             controls
             preload="metadata"
             onEnded={() => {

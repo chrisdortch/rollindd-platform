@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 import './brand-logo.css';
 
-const title = 'RollinDD | Playlist Premiere Platform';
-const description = 'Play RollinDD productions, read the words, and download individual MP3s or the full playlist.';
+const title = 'RollinDD | Seven Reflections for the Road Ahead';
+const description = 'A mobile-first seven-part listening series on fearlessness, love, wisdom, patience, collaboration, and moderation—with playback, readable words, search, and MP3 downloads.';
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://rollindd-platform.vercel.app'),
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
         url: '/opengraph-image',
         width: 1200,
         height: 630,
-        alt: 'RollinDD Playlist Premiere'
+        alt: 'RollinDD — Reflect deeply. Choose bravely.'
       }
     ],
     type: 'website'

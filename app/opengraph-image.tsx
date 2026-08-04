@@ -1,8 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { headers } from 'next/headers';
 
-export const runtime = 'edge';
-export const alt = 'RollinDD Playlist Premiere';
+export const alt = 'RollinDD — Reflect deeply. Choose bravely.';
 export const size = {
   width: 1200,
   height: 630
@@ -87,13 +86,13 @@ export default async function Image() {
               </div>
             </div>
             <div style={{ color: '#ffd875', fontSize: 28, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0 }}>
-              Playlist Premiere
+              Seven-part listening series
             </div>
             <div style={{ fontSize: 56, lineHeight: 1.02, fontWeight: 900 }}>
-              I. The Essence of Fearlessness
+              Reflect deeply. Choose bravely.
             </div>
             <div style={{ color: 'rgba(247,241,227,.82)', fontSize: 28, lineHeight: 1.18 }}>
-              Fearlessness, love, wisdom, patience, collaboration, and luminous resilience.
+              Fearlessness, love, wisdom, patience, collaboration, and moderation.
             </div>
           </div>
           <div
