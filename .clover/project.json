@@ -1,6 +1,7 @@
 {
   "$schema": "https://cloverapps.ai/schemas/project-build-policy-v1.json",
   "schemaVersion": "1.0",
+  "protocolVersion": "1.0.0",
   "project": {
     "id": "rollindd-platform",
     "title": "RollinDD",
@@ -10,6 +11,17 @@
     "productionBranch": "main",
     "productionDomain": "rollindd-platform.vercel.app"
   },
+  "risk": {
+    "classification": "medium",
+    "runtime": "public music platform with protected administrative writes",
+    "productionData": "Neon/Vercel Postgres is configured",
+    "payments": false,
+    "listenerPersonalDataRequired": false,
+    "externalMediaProviders": [
+      "Suno"
+    ],
+    "previewDataPolicy": "CI receives no production database or admin credentials and may not perform writes"
+  },
   "build": {
     "defaultMode": "preview-only",
     "allowedBranchPrefixes": [
@@ -17,15 +29,40 @@
       "agent/",
       "codex/"
     ],
+    "blockSensitivePathChanges": true,
+    "bootstrapCommands": [
+      {
+        "id": "install-locked-dependencies",
+        "command": "npm ci --no-audit --no-fund"
+      },
+      {
+        "id": "install-browser-engines",
+        "command": "npx playwright install --with-deps chromium webkit"
+      }
+    ],
     "requiredCommands": [
-      "npm run lint",
-      "npm run typecheck",
-      "npm run build",
-      "npm run test:e2e"
+      {
+        "id": "lint",
+        "command": "npm run lint"
+      },
+      {
+        "id": "typecheck",
+        "command": "npm run typecheck"
+      },
+      {
+        "id": "production-build",
+        "command": "npm run build"
+      },
+      {
+        "id": "browser-e2e",
+        "command": "npm run test:e2e"
+      }
     ],
     "requiredEvidence": [
-      "source commit",
-      "changed-file list",
+      "project-policy hash",
+      "source and base commits",
+      "complete changed-file list",
+      "sensitive-path assessment",
       "automated check receipt",
       "desktop Chromium interaction pass",
       "mobile WebKit interaction pass",
