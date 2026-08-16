@@ -1,4 +1,4 @@
-name: Capture dependency lockfile
+name: Finalize dependency lockfile
 
 on:
   push:
@@ -8,28 +8,56 @@ on:
       - '.github/workflows/capture-lockfile.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  capture:
+  finalize:
+    if: github.repository == 'chrisdortch/rollindd-platform' && github.ref == 'refs/heads/chatpro/rollindd-next-control-preview-20260816'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check out exact commit
+      - name: Check out exact branch
         uses: actions/checkout@v4
+        with:
+          ref: chatpro/rollindd-next-control-preview-20260816
+          fetch-depth: 0
 
       - name: Use Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      - name: Resolve exact dependency graph
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Pin resolved dependency versions
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.scripts['clover:validate'] = 'node scripts/clover-build.mjs';
+          pkg.dependencies = {
+            '@vercel/postgres': '0.10.0',
+            next: '16.3.1',
+            react: '19.2.8',
+            'react-dom': '19.2.8'
+          };
+          pkg.devDependencies = {
+            '@playwright/test': '1.62.1',
+            '@types/node': '26.2.0',
+            '@types/react': '19.2.18',
+            '@types/react-dom': '19.2.4',
+            eslint: '9.39.5',
+            'eslint-config-next': '16.3.1',
+            typescript: '6.0.3'
+          };
+          fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
-      - name: Upload generated lockfile
-        uses: actions/upload-artifact@v4
-        with:
-          name: rollindd-package-lock-${{ github.sha }}
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 7
+      - name: Commit deterministic dependency files and remove one-time workflow
+        run: |
+          git config user.name "Clover Build Protocol"
+          git config user.email "actions@users.noreply.github.com"
+          git add package.json package-lock.json
+          git rm .github/workflows/capture-lockfile.yml
+          git commit -m "Pin RollinDD dependencies and add deterministic lockfile"
+          git push origin HEAD:chatpro/rollindd-next-control-preview-20260816
