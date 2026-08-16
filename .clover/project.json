@@ -1,0 +1,67 @@
+{
+  "$schema": "https://cloverapps.ai/schemas/project-build-policy-v1.json",
+  "schemaVersion": "1.0",
+  "project": {
+    "id": "rollindd-platform",
+    "title": "RollinDD",
+    "owner": "Chris Dortch",
+    "repository": "chrisdortch/rollindd-platform",
+    "vercelProjectId": "prj_fCBwTx9W9T6ZV36sEyRAakiAlqRc",
+    "productionBranch": "main",
+    "productionDomain": "rollindd-platform.vercel.app"
+  },
+  "build": {
+    "defaultMode": "preview-only",
+    "allowedBranchPrefixes": [
+      "chatpro/",
+      "agent/",
+      "codex/"
+    ],
+    "requiredCommands": [
+      "npm run lint",
+      "npm run typecheck",
+      "npm run build"
+    ],
+    "requiredEvidence": [
+      "source commit",
+      "changed-file list",
+      "automated check receipt",
+      "Vercel preview deployment",
+      "preview URL",
+      "manual interaction review",
+      "production boundary confirmation"
+    ]
+  },
+  "ownerApprovalRequiredFor": [
+    "merge to main",
+    "production deployment or promotion",
+    "production alias change",
+    "custom domain or DNS change",
+    "database schema or production-data mutation",
+    "environment-variable or secret change",
+    "new paid service or recurring cost"
+  ],
+  "forbiddenInPreview": [
+    "force-push to main",
+    "production deployment",
+    "production alias assignment",
+    "custom domain or DNS mutation",
+    "destructive database operation",
+    "secret-value disclosure",
+    "cross-project resource reuse"
+  ],
+  "sensitivePaths": [
+    "sql/**",
+    ".env*",
+    "app/api/admin/**",
+    "app/api/central-command/**"
+  ],
+  "receipt": {
+    "artifactPath": ".clover/artifacts/build-receipt.json",
+    "retentionDays": 30,
+    "statusValues": [
+      "passed",
+      "failed"
+    ]
+  }
+}
