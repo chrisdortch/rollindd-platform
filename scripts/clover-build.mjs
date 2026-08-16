@@ -105,7 +105,8 @@ function eventHeadSha() {
   }
 }
 
-function preflightCheck(id, passed, detail) {
+function preflightCheck(id, passed, successDetail, failureDetail = successDetail) {
+  const detail = passed ? successDetail : failureDetail;
   return {
     id,
     phase: 'preflight',
@@ -144,40 +145,51 @@ function main() {
   const sensitivePatterns = policy.sensitivePaths ?? [];
   const sensitiveFiles = changedFiles.filter((file) => matchesAny(file, sensitivePatterns));
   const allowedPrefixes = build.allowedBranchPrefixes ?? [];
+  const matchingPrefix = branch
+    ? allowedPrefixes.find((prefix) => branch.startsWith(prefix)) ?? null
+    : null;
   const mode = process.env.CLOVER_BUILD_MODE || build.defaultMode || 'preview-only';
 
   const checks = [
     preflightCheck(
       'repository-identity',
       !project.repository || repository === project.repository,
-      `Expected ${project.repository || 'the configured repository'}; observed ${repository || 'unknown'}`
+      `Repository identity matched ${repository || project.repository || 'the configured repository'}.`,
+      `Expected ${project.repository || 'the configured repository'}; observed ${repository || 'unknown'}.`
     ),
     preflightCheck(
       'preview-mode',
       mode === 'preview-only',
-      `Expected preview-only mode; observed ${mode}`
+      'Validation mode is preview-only.',
+      `Expected preview-only mode; observed ${mode}.`
     ),
     preflightCheck(
       'non-production-source-branch',
       Boolean(branch) && branch !== productionBranch,
-      `Preview validation may not run from production branch ${productionBranch}; observed ${branch || 'unknown'}`
+      `Source branch ${branch || 'unknown'} is separate from production branch ${productionBranch}.`,
+      `Preview validation may not run from production branch ${productionBranch}; observed ${branch || 'unknown'}.`
     ),
     preflightCheck(
       'allowed-branch-prefix',
-      !branch || allowedPrefixes.length === 0 || allowedPrefixes.some((prefix) => branch.startsWith(prefix)),
-      `Branch ${branch || 'unknown'} does not match an allowed prefix: ${allowedPrefixes.join(', ')}`
+      !branch || allowedPrefixes.length === 0 || Boolean(matchingPrefix),
+      allowedPrefixes.length === 0
+        ? 'No branch-prefix restriction is configured.'
+        : `Branch ${branch || 'unknown'} matches allowed prefix ${matchingPrefix || 'none'}.`,
+      `Branch ${branch || 'unknown'} does not match an allowed prefix: ${allowedPrefixes.join(', ')}.`
     ),
     preflightCheck(
       'base-commit-resolved',
       Boolean(baseCommit),
-      `Could not resolve a merge base against ${remoteBaseRef}`
+      `Resolved production merge base ${baseCommit || 'unknown'} against ${remoteBaseRef}.`,
+      `Could not resolve a merge base against ${remoteBaseRef}.`
     ),
     preflightCheck(
       'sensitive-path-boundary',
       !(build.blockSensitivePathChanges === true && sensitiveFiles.length > 0),
       sensitiveFiles.length
-        ? `Sensitive paths changed: ${sensitiveFiles.join(', ')}`
-        : 'No sensitive paths changed'
+        ? `Sensitive paths were detected but are not configured to block preview validation: ${sensitiveFiles.join(', ')}.`
+        : 'No sensitive paths changed.',
+      `Sensitive paths changed: ${sensitiveFiles.join(', ')}.`
     )
   ];
 
