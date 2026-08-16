@@ -6,15 +6,13 @@ on:
       - 'chatpro/**'
       - 'agent/**'
       - 'codex/**'
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: clover-preview-${{ github.repository }}-${{ github.head_ref || github.ref }}
+  group: clover-preview-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,7 +27,7 @@ jobs:
       - name: Check out exact candidate commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -45,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clover-build-receipt-${{ github.event.pull_request.head.sha || github.sha }}
+          name: clover-build-receipt-${{ github.sha }}
           path: |
             .clover/artifacts
             test-results
