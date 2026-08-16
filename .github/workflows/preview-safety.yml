@@ -47,8 +47,7 @@ jobs:
         with:
           name: clover-build-receipt-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            .clover/artifacts/build-receipt.json
-            .clover/artifacts/playwright-report
+            .clover/artifacts
             test-results
           if-no-files-found: warn
           retention-days: 30
