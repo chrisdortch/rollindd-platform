@@ -20,15 +20,18 @@
     "requiredCommands": [
       "npm run lint",
       "npm run typecheck",
-      "npm run build"
+      "npm run build",
+      "npm run test:e2e"
     ],
     "requiredEvidence": [
       "source commit",
       "changed-file list",
       "automated check receipt",
+      "desktop Chromium interaction pass",
+      "mobile WebKit interaction pass",
       "Vercel preview deployment",
       "preview URL",
-      "manual interaction review",
+      "owner visual review",
       "production boundary confirmation"
     ]
   },

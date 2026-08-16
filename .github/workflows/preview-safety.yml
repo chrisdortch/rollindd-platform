@@ -31,14 +31,20 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium webkit
+
       - name: Run required validation and write receipt
         run: node scripts/validate-preview.mjs
 
-      - name: Upload Clover build receipt
+      - name: Upload Clover build receipt and browser evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: clover-build-receipt-${{ github.sha }}
-          path: .clover/artifacts/build-receipt.json
+          path: |
+            .clover/artifacts/build-receipt.json
+            .clover/artifacts/playwright-report
+            test-results
           if-no-files-found: warn
           retention-days: 30

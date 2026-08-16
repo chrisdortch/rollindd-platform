@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 const checks = [
   { name: 'lint', command: 'npm run lint' },
   { name: 'typecheck', command: 'npm run typecheck' },
-  { name: 'build', command: 'npm run build' }
+  { name: 'build', command: 'npm run build' },
+  { name: 'browser-e2e', command: 'npm run test:e2e' }
 ];
 
 const results = [];
