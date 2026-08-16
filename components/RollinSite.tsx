@@ -77,6 +77,15 @@ function PauseIcon() {
   );
 }
 
+function NextIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 5.5v13l9-6.5-9-6.5Z" />
+      <path d="M18 5v14" />
+    </svg>
+  );
+}
+
 function InfoIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -481,15 +490,27 @@ export function RollinSite({ site }: { site: Site }) {
               setPlayerMessage('Could not load MP3.');
             }}
           />
-          <button
-            className="icon-button airplay-button"
-            onClick={openAirPlayPicker}
-            aria-label="Send audio to TV"
-            type="button"
-            disabled={!selectedTrack || !airPlayAvailable}
-          >
-            <AirPlayIcon />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              className="icon-button"
+              onClick={playNext}
+              aria-label="Play next production"
+              title="Next production"
+              type="button"
+              disabled={!playableCount}
+            >
+              <NextIcon />
+            </button>
+            <button
+              className="icon-button airplay-button"
+              onClick={openAirPlayPicker}
+              aria-label="Send audio to TV"
+              type="button"
+              disabled={!selectedTrack || !airPlayAvailable}
+            >
+              <AirPlayIcon />
+            </button>
+          </div>
         </div>
       </section>
 
