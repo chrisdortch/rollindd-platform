@@ -1,0 +1,173 @@
+name: Clover Vault backup and restore proof
+
+on:
+  push:
+    branches:
+      - 'backup/clover-vault-rollindd-*'
+
+permissions:
+  contents: read
+
+jobs:
+  backup-and-restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      PROJECT_ID: rollindd-platform
+      REPOSITORY_FULL_NAME: chrisdortch/rollindd-platform
+      PRODUCTION_BRANCH: main
+      PRODUCTION_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
+      CANDIDATE_SHA: 11bafd1fa5e1162144823644798e440ee48f32e9
+    steps:
+      - name: Check out backup control branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Fetch every public branch and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --prune --tags origin '+refs/heads/*:refs/remotes/origin/*'
+          git cat-file -e "${PRODUCTION_SHA}^{commit}"
+          git cat-file -e "${CANDIDATE_SHA}^{commit}"
+
+      - name: Build full-history backup package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p clover-vault/source clover-vault/metadata clover-vault/evidence
+
+          git bundle create clover-vault/source/repository.bundle --all
+          git bundle verify clover-vault/source/repository.bundle
+          git bundle list-heads clover-vault/source/repository.bundle > clover-vault/metadata/bundle-heads.txt
+
+          git archive --format=zip --output=clover-vault/source/production-source.zip "${PRODUCTION_SHA}"
+          git archive --format=zip --output=clover-vault/source/candidate-source.zip "${CANDIDATE_SHA}"
+
+          git for-each-ref --sort=refname --format='%(refname)%09%(objectname)%09%(committerdate:iso-strict)' \
+            refs/heads refs/remotes/origin refs/tags > clover-vault/metadata/refs.tsv
+          git log --all --date=iso-strict --pretty=format:'%H%x09%P%x09%aI%x09%an%x09%s' \
+            > clover-vault/metadata/commit-history.tsv
+          git show --stat --oneline --decorate --no-renames "${PRODUCTION_SHA}" \
+            > clover-vault/metadata/production-commit.txt
+          git show --stat --oneline --decorate --no-renames "${CANDIDATE_SHA}" \
+            > clover-vault/metadata/candidate-commit.txt
+          (git lfs ls-files || true) > clover-vault/metadata/git-lfs-files.txt
+
+          node <<'NODE'
+          const fs = require('fs');
+          const cp = require('child_process');
+          const run = (command) => cp.execSync(command, { encoding: 'utf8' }).trim();
+          const manifest = {
+            schemaVersion: '1.0',
+            protocol: 'Clover Backup Protocol v1',
+            generatedAt: new Date().toISOString(),
+            classification: 'public-source-backup',
+            encryptionRequiredForSourceConfidentiality: false,
+            repository: process.env.REPOSITORY_FULL_NAME,
+            projectId: process.env.PROJECT_ID,
+            production: {
+              branch: process.env.PRODUCTION_BRANCH,
+              commit: process.env.PRODUCTION_SHA
+            },
+            candidate: {
+              commit: process.env.CANDIDATE_SHA
+            },
+            controlBranch: process.env.GITHUB_REF_NAME,
+            controlCommit: run('git rev-parse HEAD'),
+            workflowRunId: process.env.GITHUB_RUN_ID,
+            contents: [
+              'source/repository.bundle',
+              'source/production-source.zip',
+              'source/candidate-source.zip',
+              'metadata/refs.tsv',
+              'metadata/commit-history.tsv',
+              'metadata/bundle-heads.txt'
+            ],
+            restoreTest: {
+              state: 'pending',
+              targetCommit: process.env.CANDIDATE_SHA
+            },
+            release: {
+              productionMutationAuthorized: false,
+              mergeAuthorized: false,
+              domainChangeAuthorized: false,
+              dataMutationAuthorized: false,
+              secretMutationAuthorized: false
+            }
+          };
+          fs.writeFileSync('clover-vault/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+
+      - name: Restore from bundle and validate candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESTORE_DIR="${RUNNER_TEMP}/rollindd-restored"
+          rm -rf "${RESTORE_DIR}"
+          git clone --no-checkout "${GITHUB_WORKSPACE}/clover-vault/source/repository.bundle" "${RESTORE_DIR}"
+          cd "${RESTORE_DIR}"
+          git checkout --detach "${CANDIDATE_SHA}"
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA}"
+
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm run build
+          npx playwright install --with-deps chromium webkit
+          npm run test:e2e
+
+          mkdir -p "${GITHUB_WORKSPACE}/clover-vault/evidence"
+          cp -R test-results "${GITHUB_WORKSPACE}/clover-vault/evidence/test-results"
+          cp -R playwright-report "${GITHUB_WORKSPACE}/clover-vault/evidence/playwright-report"
+
+          node <<'NODE'
+          const fs = require('fs');
+          const receipt = {
+            schemaVersion: '1.0',
+            generatedAt: new Date().toISOString(),
+            repository: process.env.REPOSITORY_FULL_NAME,
+            restoredFrom: 'source/repository.bundle',
+            restoredCommit: process.env.CANDIDATE_SHA,
+            status: 'passed',
+            checks: [
+              'bundle clone',
+              'exact commit checkout',
+              'npm ci',
+              'ESLint',
+              'TypeScript',
+              'Next.js optimized build',
+              'desktop Chromium journey',
+              'mobile WebKit journey'
+            ],
+            productionChanged: false
+          };
+          fs.writeFileSync(process.env.GITHUB_WORKSPACE + '/clover-vault/restore-receipt.json', JSON.stringify(receipt, null, 2) + '\n');
+          NODE
+
+      - name: Finalize checksums
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd clover-vault
+          find . -type f ! -name 'CHECKSUMS.sha256' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > CHECKSUMS.sha256
+
+      - name: Upload Clover Vault package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-vault-rollindd-${{ github.sha }}
+          path: clover-vault
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 6
