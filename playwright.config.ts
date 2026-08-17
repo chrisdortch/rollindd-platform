@@ -21,7 +21,6 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:3000',
     locale: 'en-US',
     timezoneId: 'America/Chicago',
-    reducedMotion: 'reduce',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'

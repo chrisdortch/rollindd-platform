@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { createVisualEvidenceRecorder } from './support/clover-visual-evidence';
 
 test('listener can search, open words, and advance to the next production', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.route(/\.(?:mp3|mp4|m4a|wav)(?:\?.*)?$/i, (route) => route.abort());
 
   const evidence = createVisualEvidenceRecorder(page, testInfo, {
