@@ -18,34 +18,39 @@ concurrency:
 jobs:
   validate:
     name: Validate preview candidate
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       CLOVER_BUILD_MODE: preview-only
+      CLOVER_VISUAL_REVIEW_MODE: bounded
+      NEXT_TELEMETRY_DISABLED: '1'
+      NO_COLOR: '1'
 
     steps:
       - name: Check out exact candidate commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Use Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
       - name: Run policy-bound Clover validation
         run: node scripts/clover-build.mjs
 
-      - name: Upload Clover receipt and browser evidence
+      - name: Upload Clover receipt and bounded browser evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: clover-build-receipt-${{ github.sha }}
+          name: clover-preview-evidence-${{ github.sha }}
           path: |
             .clover/artifacts
             test-results
-          if-no-files-found: warn
+          if-no-files-found: error
+          include-hidden-files: true
           retention-days: 30
+          compression-level: 6

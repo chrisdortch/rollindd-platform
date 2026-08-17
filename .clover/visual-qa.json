@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "1.0",
+  "protocolVersion": "1.0.0",
+  "project": {
+    "id": "rollindd-platform",
+    "title": "RollinDD",
+    "repository": "chrisdortch/rollindd-platform",
+    "productionBranch": "main"
+  },
+  "mode": "deterministic-first",
+  "browsers": {
+    "requiredProjects": [
+      "desktop-chromium",
+      "mobile-webkit"
+    ]
+  },
+  "evidence": {
+    "directory": ".clover/artifacts/visual-qa",
+    "screenshotsDirectory": ".clover/artifacts/visual-qa/screenshots",
+    "receiptsDirectory": ".clover/artifacts/visual-qa/receipts",
+    "screenshotType": "jpeg",
+    "screenshotQuality": 72,
+    "screenshotScale": "css",
+    "fullPageCaptureAllowed": false,
+    "maxModelReviewScreenshots": 4
+  },
+  "checks": {
+    "tapTargetMinimumPx": 40,
+    "textMinimumPx": 12,
+    "maxReportedElements": 12,
+    "hard": [
+      "required-visual-state-captured",
+      "no-horizontal-overflow",
+      "no-visible-broken-images",
+      "no-page-errors",
+      "no-unexpected-console-errors",
+      "no-same-origin-request-failures"
+    ]
+  },
+  "review": {
+    "baselineStatus": "unapproved",
+    "requireModelReviewOnFirstCapture": true,
+    "forceReviewEnv": "CLOVER_FORCE_MODEL_REVIEW",
+    "uiPathPatterns": [
+      "app/**/*.tsx",
+      "app/**/*.css",
+      "components/**/*.tsx",
+      "public/**",
+      "package.json",
+      "package-lock.json",
+      "next.config.*",
+      "playwright.config.*"
+    ],
+    "nonVisualPathPatterns": [
+      ".clover/**",
+      ".github/**",
+      "docs/**",
+      "scripts/**",
+      "tests/**",
+      "*.md",
+      ".gitignore"
+    ]
+  },
+  "network": {
+    "ignoreResourceTypes": [
+      "media"
+    ],
+    "ignoreExtensions": [
+      ".mp3",
+      ".mp4",
+      ".m4a",
+      ".wav"
+    ],
+    "ignoreUrlPatterns": []
+  },
+  "console": {
+    "ignorePatterns": []
+  },
+  "capturePlan": [
+    {
+      "stateId": "listener-home",
+      "priority": 100
+    },
+    {
+      "stateId": "player-active",
+      "priority": 90
+    },
+    {
+      "stateId": "words-dialog",
+      "priority": 80
+    }
+  ],
+  "boundaries": {
+    "productionMutationAuthorized": false,
+    "productionDeploymentAuthorized": false,
+    "productionDataMutationAuthorized": false,
+    "browserCredentialsAllowed": false,
+    "externalWritesAllowed": false
+  }
+}

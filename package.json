@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
-    "clover:validate": "node scripts/clover-build.mjs"
+    "clover:validate": "node scripts/clover-build.mjs",
+    "clover:visual-summary": "node scripts/clover-quality-summary.mjs"
   },
   "dependencies": {
     "@vercel/postgres": "0.10.0",

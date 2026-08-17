@@ -56,6 +56,10 @@
       {
         "id": "browser-e2e",
         "command": "npm run test:e2e"
+      },
+      {
+        "id": "visual-evidence-summary",
+        "command": "npm run clover:visual-summary"
       }
     ],
     "requiredEvidence": [
@@ -66,6 +70,9 @@
       "automated check receipt",
       "desktop Chromium interaction pass",
       "mobile WebKit interaction pass",
+      "visual QA browser receipt",
+      "bounded model-review queue",
+      "checksum-addressed CSS-scale screenshot evidence",
       "Vercel preview deployment",
       "preview URL",
       "owner visual review",
