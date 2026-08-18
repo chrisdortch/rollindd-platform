@@ -1,0 +1,280 @@
+name: Validate clean collection preview v2
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'app/page.tsx'
+      - 'app/sites/[slug]/page.tsx'
+      - 'components/CollectionExperience.tsx'
+      - 'components/CollectionExperience.module.css'
+      - 'package.json'
+      - 'scripts/collection-v2-release-audit.mjs'
+      - '.github/workflows/clean-collection-preview-v2.yml'
+  workflow_dispatch:
+    inputs:
+      include_webkit:
+        description: 'Include the slower mobile WebKit release-evidence journey'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rollindd-clean-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.CLOVER_CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+
+      - name: Prove bounded diff and repository cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .clover-preview-evidence
+          git diff --check "${CLOVER_BASE_SHA}...${CLOVER_CANDIDATE_SHA}"
+          git diff --name-only "${CLOVER_BASE_SHA}...${CLOVER_CANDIDATE_SHA}" | LC_ALL=C sort > .clover-preview-evidence/changed-files.txt
+          node <<'NODE'
+          const fs = require('node:fs');
+          const expected = [
+            '.github/workflows/clean-collection-preview-v2.yml',
+            'app/page.tsx',
+            'app/sites/[slug]/page.tsx',
+            'components/CollectionExperience.module.css',
+            'components/CollectionExperience.tsx',
+            'package.json',
+            'scripts/collection-v2-release-audit.mjs'
+          ].sort();
+          const actual = fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            console.error(JSON.stringify({ expected, actual }, null, 2));
+            process.exit(1);
+          }
+          fs.writeFileSync(
+            '.clover-preview-evidence/diff-boundary.json',
+            `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
+          );
+          NODE
+
+      - name: Select fast-preview or full release-evidence tier
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const body = event.pull_request?.body || '';
+          const dispatchValue = event.inputs?.include_webkit;
+          const includeWebKit =
+            dispatchValue === true ||
+            dispatchValue === 'true' ||
+            body.includes('clover:full-webkit');
+          const selection = {
+            eventName: process.env.GITHUB_EVENT_NAME,
+            includeWebKit,
+            evidenceTier: includeWebKit ? 'release-evidence' : 'fast-preview',
+            selectionSource: body.includes('clover:full-webkit')
+              ? 'pull-request-marker'
+              : dispatchValue === true || dispatchValue === 'true'
+                ? 'workflow-dispatch-input'
+                : 'default-fast-preview'
+          };
+          fs.appendFileSync(process.env.GITHUB_ENV, `CLOVER_INCLUDE_WEBKIT=${includeWebKit}\n`);
+          fs.writeFileSync(
+            '.clover-preview-evidence/evidence-tier.json',
+            `${JSON.stringify(selection, null, 2)}\n`
+          );
+          console.log(JSON.stringify(selection));
+          NODE
+
+      - name: Resolve and freeze this validation run's dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
+          cp package-lock.json .clover-preview-evidence/resolved-package-lock.json
+          sha256sum package-lock.json > .clover-preview-evidence/resolved-package-lock.sha256
+          node <<'NODE'
+          const fs = require('node:fs');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const expected = {
+            '@vercel/postgres': '0.10.0',
+            next: '16.3.1',
+            react: '19.2.8',
+            'react-dom': '19.2.8',
+            '@types/node': '26.2.0',
+            '@types/react': '19.2.18',
+            '@types/react-dom': '19.2.4',
+            eslint: '9.39.5',
+            'eslint-config-next': '16.3.1',
+            typescript: '6.0.3'
+          };
+          const actual = {};
+          for (const [name, version] of Object.entries(expected)) {
+            actual[name] = lock.packages?.[`node_modules/${name}`]?.version || null;
+            if (actual[name] !== version) {
+              console.error(`${name}: expected ${version}, observed ${actual[name]}`);
+              process.exit(1);
+            }
+          }
+          fs.writeFileSync(
+            '.clover-preview-evidence/dependency-versions.json',
+            `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
+          );
+          NODE
+
+      - name: Run source and production-build gates
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Install pinned browser tooling for the selected evidence tier
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund playwright@1.62.1
+          if [[ "${CLOVER_INCLUDE_WEBKIT}" == "true" ]]; then
+            npx playwright install --with-deps chromium webkit
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Run deterministic browser and visual-asset audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start -- --hostname 127.0.0.1 --port 4173 > .clover-preview-evidence/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+
+          node <<'NODE'
+          const url = 'http://127.0.0.1:4173/';
+          for (let attempt = 0; attempt < 90; attempt += 1) {
+            try {
+              const response = await fetch(url, { redirect: 'manual' });
+              if (response.status < 500) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+          process.exit(1);
+          NODE
+
+          CLOVER_BASE_URL=http://127.0.0.1:4173 \
+          CLOVER_EVIDENCE_DIR=.clover-preview-evidence \
+          node scripts/collection-v2-release-audit.mjs
+
+      - name: Write non-authorizing receipt
+        if: always()
+        shell: bash
+        env:
+          CLOVER_JOB_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p .clover-preview-evidence
+          node <<'NODE'
+          const fs = require('node:fs');
+          const readJson = (file, fallback) => {
+            try {
+              return JSON.parse(fs.readFileSync(file, 'utf8'));
+            } catch {
+              return fallback;
+            }
+          };
+          const changedFiles = fs.existsSync('.clover-preview-evidence/changed-files.txt')
+            ? fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean)
+            : [];
+          const browserAudit = readJson('.clover-preview-evidence/browser-audit.json', { status: 'missing', results: [] });
+          const evidenceTier = readJson('.clover-preview-evidence/evidence-tier.json', {
+            includeWebKit: false,
+            evidenceTier: 'unknown',
+            selectionSource: 'missing'
+          });
+          const receipt = {
+            schemaVersion: '2.1',
+            project: 'rollindd-platform',
+            candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
+            workflowCommit: process.env.GITHUB_SHA,
+            baseCommit: process.env.CLOVER_BASE_SHA,
+            jobStatus: process.env.CLOVER_JOB_STATUS,
+            changedFiles,
+            evidenceTier: evidenceTier.evidenceTier,
+            evidenceTierSelectionSource: evidenceTier.selectionSource,
+            browserGate: evidenceTier.includeWebKit
+              ? 'chromium-desktop-mobile-plus-webkit-mobile'
+              : 'chromium-desktop-mobile',
+            fullWebKitIncluded: evidenceTier.includeWebKit,
+            visualAssetsVerified: browserAudit.status === 'passed' &&
+              browserAudit.results.length > 0 &&
+              browserAudit.results.every((result) =>
+                result.heroAssets?.images?.every((image) => image.ok)
+              ),
+            browserAuditStatus: browserAudit.status,
+            browserResultCount: browserAudit.results.length,
+            validationStates: ['intro', 'history-back-forward', 'library-idle', 'player-active'],
+            expectedNetworkExceptions: [
+              'cancelled Next.js _rsc navigation requests',
+              'cancelled media fetches replaced by deterministic local fixtures'
+            ],
+            mode: 'preview-only',
+            productionEligible: false,
+            ownerApprovalRequired: true,
+            boundaries: {
+              mergeAuthorized: false,
+              productionDeploymentAuthorized: false,
+              productionDataAccessAuthorized: false,
+              domainOrDnsChangeAuthorized: false,
+              secretChangeAuthorized: false,
+              externalMessageAuthorized: false,
+              purchaseAuthorized: false
+            }
+          };
+          fs.writeFileSync('.clover-preview-evidence/receipt.json', `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+
+      - name: Upload bounded preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rollindd-clean-collection-v2-${{ env.CLOVER_CANDIDATE_SHA }}
+          path: |
+            .clover-preview-evidence/changed-files.txt
+            .clover-preview-evidence/diff-boundary.json
+            .clover-preview-evidence/evidence-tier.json
+            .clover-preview-evidence/dependency-versions.json
+            .clover-preview-evidence/resolved-package-lock.json
+            .clover-preview-evidence/resolved-package-lock.sha256
+            .clover-preview-evidence/browser-audit.json
+            .clover-preview-evidence/receipt.json
+            .clover-preview-evidence/screenshots
+            .clover-preview-evidence/traces
+            .clover-preview-evidence/server.log
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6

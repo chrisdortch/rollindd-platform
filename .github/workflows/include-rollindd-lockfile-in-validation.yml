@@ -1,0 +1,63 @@
+name: Include RollinD lockfile in validation boundary
+
+on:
+  push:
+    branches:
+      - chatpro/rollindd-clean-collection-v2-preview-20260817
+    paths:
+      - .github/workflows/include-rollindd-lockfile-in-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: chatpro/rollindd-clean-collection-v2-preview-20260817
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Add the committed lockfile to the exact validation boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = '.github/workflows/clean-collection-preview-v2.yml';
+          let source = fs.readFileSync(file, 'utf8');
+          const triggerNeedle = "      - 'package.json'\n      - '.github/workflows/clean-collection-preview-v2.yml'";
+          const triggerReplacement = "      - 'package.json'\n      - 'package-lock.json'\n      - '.github/workflows/clean-collection-preview-v2.yml'";
+          if (source.includes(triggerNeedle)) source = source.replace(triggerNeedle, triggerReplacement);
+          else if (!source.includes("      - 'package-lock.json'")) throw new Error('Could not add package-lock trigger safely.');
+
+          const allowNeedle = "            'package.json'\n          ].sort();";
+          const allowReplacement = "            'package-lock.json',\n            'package.json'\n          ].sort();";
+          if (source.includes(allowNeedle)) source = source.replace(allowNeedle, allowReplacement);
+          else if (!source.includes("            'package-lock.json',")) throw new Error('Could not add package-lock allowlist safely.');
+
+          fs.writeFileSync(file, source);
+          NODE
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/clean-collection-preview-v2.yml
+          git rm .github/workflows/include-rollindd-lockfile-in-validation.yml
+          changed="$(git diff --cached --name-only | LC_ALL=C sort)"
+          expected="$(printf '%s\n' \
+            .github/workflows/clean-collection-preview-v2.yml \
+            .github/workflows/include-rollindd-lockfile-in-validation.yml | LC_ALL=C sort)"
+          if [ "$changed" != "$expected" ]; then
+            echo 'Refusing unexpected validation-boundary diff.' >&2
+            printf 'Expected:\n%s\nObserved:\n%s\n' "$expected" "$changed" >&2
+            exit 1
+          fi
+          git diff --cached --check
+          git commit -m 'Validate the committed RollinD dependency lockfile'
+          git push origin HEAD:chatpro/rollindd-clean-collection-v2-preview-20260817
