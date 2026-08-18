@@ -1,0 +1,476 @@
+name: Bootstrap RollinD collection entrance v2 r2
+
+on:
+  push:
+    branches:
+      - chatpro/rollindd-collection-entrance-v2-preview-20260817
+    paths:
+      - '.github/workflows/bootstrap-rollindd-collection-v2-r2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-validate-and-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - name: Check out isolated clean branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Prove production ancestry and bounded pre-bootstrap diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09 HEAD
+          git diff --name-only 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09...HEAD | tee /tmp/pre-bootstrap-files.txt
+          while IFS= read -r file; do
+            case "$file" in
+              .github/workflows/bootstrap-rollindd-collection-v2.yml|.github/workflows/bootstrap-rollindd-collection-v2-r2.yml) ;;
+              '') ;;
+              *) echo "Unexpected pre-bootstrap path: $file" >&2; exit 1 ;;
+            esac
+          done < /tmp/pre-bootstrap-files.txt
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Add collection transition component
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > components/CollectionExperience.tsx <<'EOF'
+          'use client';
+
+          import { useEffect, useRef, useState } from 'react';
+          import type { CSSProperties } from 'react';
+          import { RollinSite } from '@/components/RollinSite';
+          import type { Site } from '@/lib/types';
+
+          async function copyCollectionUrl(url: string) {
+            if (!navigator.clipboard?.writeText) return false;
+
+            try {
+              await navigator.clipboard.writeText(url);
+              return true;
+            } catch {
+              return false;
+            }
+          }
+
+          export function CollectionExperience({ site }: { site: Site }) {
+            const [entered, setEntered] = useState(false);
+            const [shareStatus, setShareStatus] = useState('');
+            const libraryRef = useRef<HTMLDivElement | null>(null);
+            const themeStyle = {
+              '--bg': site.theme.palette.background,
+              '--surface': site.theme.palette.surface,
+              '--text': site.theme.palette.text,
+              '--muted': site.theme.palette.muted,
+              '--accent': site.theme.palette.accent,
+              '--accent-2': site.theme.palette.accent2
+            } as CSSProperties;
+            const heroStyle = {
+              backgroundColor: site.theme.palette.background,
+              backgroundImage: `linear-gradient(90deg, rgba(2, 7, 18, .94) 0%, rgba(2, 7, 18, .72) 48%, rgba(2, 7, 18, .28) 100%), url(${JSON.stringify(site.theme.hero.imageUrl)})`,
+              backgroundPosition: 'center',
+              backgroundSize: 'cover'
+            } as CSSProperties;
+
+            useEffect(() => {
+              function syncViewFromLocation() {
+                setEntered(window.location.hash === '#tracks');
+              }
+
+              syncViewFromLocation();
+              window.addEventListener('hashchange', syncViewFromLocation);
+              window.addEventListener('popstate', syncViewFromLocation);
+              return () => {
+                window.removeEventListener('hashchange', syncViewFromLocation);
+                window.removeEventListener('popstate', syncViewFromLocation);
+              };
+            }, []);
+
+            useEffect(() => {
+              if (!entered) return;
+              window.requestAnimationFrame(() => {
+                libraryRef.current?.scrollIntoView({ block: 'start' });
+              });
+            }, [entered]);
+
+            function enterCollection() {
+              if (window.location.hash !== '#tracks') {
+                window.history.pushState({ rollinddView: 'library' }, '', '#tracks');
+              }
+              setEntered(true);
+            }
+
+            async function shareCollection() {
+              const cleanUrl = new URL(window.location.pathname, window.location.origin).toString();
+              const shareData: ShareData = {
+                title: site.title,
+                text: site.tagline,
+                url: cleanUrl
+              };
+
+              setShareStatus('');
+
+              if (navigator.share) {
+                try {
+                  setShareStatus('Opening share options…');
+                  await navigator.share(shareData);
+                  setShareStatus('Share complete');
+                  return;
+                } catch (error) {
+                  if (error instanceof DOMException && error.name === 'AbortError') {
+                    setShareStatus('');
+                    return;
+                  }
+                }
+              }
+
+              const copied = await copyCollectionUrl(cleanUrl);
+              setShareStatus(
+                copied
+                  ? 'Collection link copied'
+                  : 'Use your browser menu to share this collection'
+              );
+            }
+
+            if (entered) {
+              return (
+                <div className="collection-library-view" ref={libraryRef} style={themeStyle}>
+                  <RollinSite site={site} />
+                </div>
+              );
+            }
+
+            return (
+              <section
+                className="shell collection-intro-shell"
+                style={themeStyle}
+                aria-label={`${site.title} collection introduction`}
+              >
+                <div className="hero collection-intro-hero" style={heroStyle}>
+                  <div className="hero-content">
+                    <div className="kicker">
+                      Curated collection · {site.tracks.length} productions
+                    </div>
+                    <h1>{site.theme.hero.headline || site.title}</h1>
+                    <p className="lede">{site.theme.hero.subheadline || site.tagline}</p>
+                    <div className="release-row collection-actions">
+                      <button
+                        className="gold-button collection-enter-button"
+                        type="button"
+                        onClick={enterCollection}
+                      >
+                        Enter the collection
+                      </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={shareCollection}
+                      >
+                        Share collection
+                      </button>
+                      {site.sunoPlaylistUrl && (
+                        <a
+                          className="ghost-button"
+                          href={site.sunoPlaylistUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open in Suno
+                        </a>
+                      )}
+                    </div>
+                    {shareStatus && (
+                      <p className="helper" role="status" aria-live="polite">
+                        {shareStatus}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </section>
+            );
+          }
+          EOF
+
+      - name: Apply bounded route, player, CSS, and static-test changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          for (const pagePath of ['app/page.tsx', 'app/sites/[slug]/page.tsx']) {
+            let source = fs.readFileSync(pagePath, 'utf8');
+            const oldImport = "import { RollinSite } from '@/components/RollinSite';";
+            const oldRender = '<RollinSite site={site} />';
+            if (!source.includes(oldImport)) throw new Error(`Expected import missing in ${pagePath}`);
+            if (!source.includes(oldRender)) throw new Error(`Expected render missing in ${pagePath}`);
+            source = source
+              .replace(oldImport, "import { CollectionExperience } from '@/components/CollectionExperience';")
+              .replace(oldRender, '<CollectionExperience site={site} />');
+            fs.writeFileSync(pagePath, source);
+          }
+
+          const sitePath = 'components/RollinSite.tsx';
+          let siteSource = fs.readFileSync(sitePath, 'utf8');
+          const dockClass = 'className="now-playing-dock"';
+          if (!siteSource.includes(dockClass)) throw new Error('Expected now-playing dock class missing');
+          siteSource = siteSource.replace(dockClass, 'className="now-playing-dock" hidden={!selectedTrack}');
+          fs.writeFileSync(sitePath, siteSource);
+
+          const cssPath = 'app/globals.css';
+          const css = fs.readFileSync(cssPath, 'utf8');
+          const additions = `
+
+/* Collection entrance v2: one intentional view at a time. */
+.collection-intro-shell {
+  min-height: 100svh;
+  display: grid;
+  align-items: center;
+  padding-bottom: 16px;
+}
+.collection-intro-hero { width: 100%; }
+.collection-library-view { min-height: 100svh; }
+.now-playing-dock[hidden] { display: none !important; }
+
+@media (max-width: 520px) {
+  .collection-intro-shell {
+    min-height: 100svh;
+    padding: 10px;
+  }
+  .collection-intro-hero {
+    min-height: calc(100svh - 20px);
+    align-items: end;
+    padding: 24px 24px 28px;
+  }
+  .collection-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+  }
+  .collection-actions .collection-enter-button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .collection-actions .ghost-button { width: 100%; }
+  .music-shell { padding-bottom: 112px; }
+  .now-playing-dock {
+    bottom: 8px;
+    width: calc(100% - 16px);
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 12px;
+  }
+  .now-playing-dock > div:first-child { padding-bottom: 0; }
+  .now-playing-dock span {
+    margin-bottom: 2px;
+    font-size: 10px;
+  }
+  .now-playing-dock strong {
+    font-size: 14px;
+    line-height: 1.15;
+  }
+  .player-progress { display: none; }
+  .player-control-row { gap: 6px; }
+  .now-playing-dock audio {
+    min-width: 0;
+    height: 34px;
+  }
+  .airplay-button {
+    width: 38px;
+    height: 38px;
+  }
+}
+`;
+          if (css.includes('Collection entrance v2:')) throw new Error('v2 CSS exists unexpectedly');
+          fs.writeFileSync(cssPath, `${css.trimEnd()}${additions}`);
+
+          fs.mkdirSync('scripts', { recursive: true });
+          fs.writeFileSync('scripts/check-collection-v2.mjs', `import fs from 'node:fs';
+
+const component = fs.readFileSync('components/CollectionExperience.tsx', 'utf8');
+const site = fs.readFileSync('components/RollinSite.tsx', 'utf8');
+const css = fs.readFileSync('app/globals.css', 'utf8');
+const pages = ['app/page.tsx', 'app/sites/[slug]/page.tsx'].map((file) => fs.readFileSync(file, 'utf8'));
+const assert = (value, message) => { if (!value) throw new Error(message); };
+
+assert(component.includes('if (entered)'), 'collection view is not conditional');
+assert(component.includes("window.location.hash === '#tracks'"), 'history-backed state is missing');
+assert(component.includes("new URL(window.location.pathname, window.location.origin)"), 'clean share URL is missing');
+assert(component.includes('collection-enter-button'), 'mobile hierarchy hook is missing');
+assert(site.includes('className="now-playing-dock" hidden={!selectedTrack}'), 'idle player is not hidden');
+assert(css.includes('.now-playing-dock[hidden]'), 'hidden player CSS is missing');
+assert(css.includes('.collection-actions .collection-enter-button'), 'mobile entrance CSS is missing');
+for (const page of pages) {
+  assert(page.includes('CollectionExperience'), 'public route is missing CollectionExperience');
+  assert(!page.includes('<RollinSite site={site} />'), 'public route bypasses transition');
+}
+console.log(JSON.stringify({ status: 'passed', checks: 9 }));
+`);
+          NODE
+
+      - name: Install locked application dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run source and production build gates
+        run: |
+          node scripts/check-collection-v2.mjs
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Install isolated browser test tooling
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.55.0
+          npx playwright install --with-deps chromium webkit
+
+      - name: Run desktop and mobile browser validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/collection-v2
+          npm run start -- --hostname 127.0.0.1 --port 4173 > artifacts/collection-v2/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:4173/ > /dev/null; then break; fi
+            sleep 1
+          done
+
+          cat > scripts/check-collection-v2-browser.mjs <<'NODE'
+          import fs from 'node:fs';
+          import { chromium, webkit } from '@playwright/test';
+
+          const baseURL = 'http://127.0.0.1:4173';
+          const profiles = [
+            { id: 'desktop-chromium', browser: chromium, viewport: { width: 1440, height: 1000 } },
+            { id: 'mobile-webkit', browser: webkit, viewport: { width: 390, height: 844 }, isMobile: true }
+          ];
+          const results = [];
+
+          for (const profile of profiles) {
+            const browser = await profile.browser.launch({ headless: true });
+            const context = await browser.newContext({
+              viewport: profile.viewport,
+              isMobile: Boolean(profile.isMobile),
+              hasTouch: Boolean(profile.isMobile),
+              reducedMotion: 'reduce'
+            });
+            const page = await context.newPage();
+            const consoleErrors = [];
+            const pageErrors = [];
+            page.on('console', (message) => {
+              if (message.type() === 'error' && !message.text().includes('net::ERR_FAILED')) {
+                consoleErrors.push(message.text());
+              }
+            });
+            page.on('pageerror', (error) => pageErrors.push(error.message));
+            await page.route(/\.(?:mp3|mp4|m4a|wav)(?:\?.*)?$/i, (route) => route.abort());
+
+            await page.goto(`${baseURL}/`, { waitUntil: 'domcontentloaded' });
+            await page.getByRole('heading', { level: 1, name: 'RollinDD' }).waitFor();
+            const entrance = page.getByRole('button', { name: 'Enter the collection' });
+            await entrance.waitFor();
+            if (await page.getByRole('heading', { name: '7 Productions' }).isVisible().catch(() => false)) {
+              throw new Error(`${profile.id}: library visible before entrance`);
+            }
+            const overflowBefore = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+            if (overflowBefore > 1) throw new Error(`${profile.id}: intro overflow ${overflowBefore}px`);
+
+            if (profile.isMobile) {
+              const enterBox = await entrance.boundingBox();
+              const heroBox = await page.locator('.hero-content').boundingBox();
+              if (!enterBox || !heroBox || enterBox.width < heroBox.width * 0.9) {
+                throw new Error('mobile: entrance action is not full width');
+              }
+            }
+
+            await page.screenshot({ path: `artifacts/collection-v2/${profile.id}-intro.png`, fullPage: false });
+            await entrance.click();
+            await page.getByRole('heading', { name: '7 Productions' }).waitFor();
+            if (await page.getByRole('heading', { level: 1, name: 'RollinDD' }).isVisible().catch(() => false)) {
+              throw new Error(`${profile.id}: intro remains stacked above library`);
+            }
+            const player = page.getByRole('region', { name: 'Player' });
+            if (await player.isVisible().catch(() => false)) {
+              throw new Error(`${profile.id}: idle player visible before selection`);
+            }
+            const overflowAfter = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+            if (overflowAfter > 1) throw new Error(`${profile.id}: library overflow ${overflowAfter}px`);
+
+            await page.locator('button[aria-label^="Play "]').first().click();
+            await player.waitFor({ state: 'visible' });
+            const playerBox = await player.boundingBox();
+            if (profile.isMobile && (!playerBox || playerBox.height > 150)) {
+              throw new Error(`mobile: active player too tall (${playerBox?.height ?? 'missing'}px)`);
+            }
+            await page.screenshot({ path: `artifacts/collection-v2/${profile.id}-library.png`, fullPage: false });
+
+            if (consoleErrors.length || pageErrors.length) {
+              throw new Error(`${profile.id}: browser errors ${JSON.stringify({ consoleErrors, pageErrors })}`);
+            }
+            results.push({
+              profile: profile.id,
+              viewport: profile.viewport,
+              overflowBefore,
+              overflowAfter,
+              playerHeight: playerBox?.height ?? null,
+              consoleErrors,
+              pageErrors
+            });
+            await context.close();
+            await browser.close();
+          }
+
+          const receipt = {
+            schemaVersion: '1.0',
+            status: 'passed',
+            generatedAt: new Date().toISOString(),
+            productionMutationAuthorized: false,
+            productionDeploymentAuthorized: false,
+            results
+          };
+          fs.writeFileSync('artifacts/collection-v2/receipt.json', `${JSON.stringify(receipt, null, 2)}\n`);
+          console.log(JSON.stringify(receipt));
+          NODE
+          node scripts/check-collection-v2-browser.mjs
+
+      - name: Commit validated source to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf node_modules .next test-results playwright-report
+          rm -f scripts/check-collection-v2-browser.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app components scripts/check-collection-v2.mjs
+          git diff --cached --check
+          git commit -m 'Refine collection entrance and compact mobile player'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollindd-collection-v2-r2-${{ github.sha }}
+          path: artifacts/collection-v2
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
