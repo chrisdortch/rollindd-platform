@@ -1,0 +1,316 @@
+name: Validate exact RollinD v2 candidate with mobile WebKit
+
+on:
+  push:
+    branches:
+      - 'validation/rollindd-v2-webkit-d94517d8'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webkit-release-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      CLOVER_CANDIDATE_SHA: d94517d8532b07876a87d1919419641233e68d44
+      CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
+
+    steps:
+      - name: Check out validation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove this branch contains the exact candidate plus this evidence workflow only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .clover-webkit-evidence/screenshots
+          git merge-base --is-ancestor "${CLOVER_CANDIDATE_SHA}" "${GITHUB_SHA}"
+          git diff --name-only "${CLOVER_CANDIDATE_SHA}...${GITHUB_SHA}" | LC_ALL=C sort > .clover-webkit-evidence/validation-branch-diff.txt
+          node <<'NODE'
+          const fs = require('node:fs');
+          const expected = ['.github/workflows/validate-rollindd-v2-webkit.yml'];
+          const actual = fs.readFileSync('.clover-webkit-evidence/validation-branch-diff.txt', 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean);
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            console.error(JSON.stringify({ expected, actual }, null, 2));
+            process.exit(1);
+          }
+          fs.writeFileSync(
+            '.clover-webkit-evidence/source-identity.json',
+            `${JSON.stringify({ status: 'passed', candidateCommit: process.env.CLOVER_CANDIDATE_SHA, workflowCommit: process.env.GITHUB_SHA, addedPaths: actual }, null, 2)}\n`
+          );
+          NODE
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+
+      - name: Resolve pinned application dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
+          cp package-lock.json .clover-webkit-evidence/resolved-package-lock.json
+          sha256sum package-lock.json > .clover-webkit-evidence/resolved-package-lock.sha256
+
+      - name: Run source and production-build gates
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Install pinned WebKit test tooling
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.62.1
+          npx playwright install --with-deps webkit
+
+      - name: Create bounded iPhone WebKit journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .clover-webkit-tests
+          cat > .clover-webkit-tests/playwright.config.mjs <<'CONFIG'
+          import { defineConfig, devices } from '@playwright/test';
+
+          export default defineConfig({
+            testDir: '.',
+            outputDir: '../.clover-webkit-evidence/test-results',
+            timeout: 35_000,
+            expect: { timeout: 10_000 },
+            workers: 1,
+            retries: 1,
+            reporter: [
+              ['list'],
+              ['html', { outputFolder: '../.clover-webkit-evidence/playwright-report', open: 'never' }]
+            ],
+            use: {
+              baseURL: 'http://127.0.0.1:4173',
+              ...devices['iPhone 14'],
+              locale: 'en-US',
+              timezoneId: 'America/Chicago',
+              reducedMotion: 'reduce',
+              trace: 'retain-on-failure',
+              video: 'retain-on-failure',
+              screenshot: 'only-on-failure'
+            }
+          });
+          CONFIG
+
+          cat > .clover-webkit-tests/collection-v2-webkit.spec.mjs <<'TEST'
+          import { test, expect } from '@playwright/test';
+
+          function silentWav() {
+            const sampleRate = 8000;
+            const seconds = 0.35;
+            const dataSize = Math.floor(sampleRate * seconds);
+            const buffer = Buffer.alloc(44 + dataSize);
+            buffer.write('RIFF', 0);
+            buffer.writeUInt32LE(36 + dataSize, 4);
+            buffer.write('WAVE', 8);
+            buffer.write('fmt ', 12);
+            buffer.writeUInt32LE(16, 16);
+            buffer.writeUInt16LE(1, 20);
+            buffer.writeUInt16LE(1, 22);
+            buffer.writeUInt32LE(sampleRate, 24);
+            buffer.writeUInt32LE(sampleRate, 28);
+            buffer.writeUInt16LE(1, 32);
+            buffer.writeUInt16LE(8, 34);
+            buffer.write('data', 36);
+            buffer.writeUInt32LE(dataSize, 40);
+            buffer.fill(128, 44);
+            return buffer;
+          }
+
+          for (const routePath of ['/', '/sites/rollindd']) {
+            test(`mobile WebKit collection journey at ${routePath}`, async ({ page }) => {
+              const consoleErrors = [];
+              const pageErrors = [];
+              const failedSameOriginRequests = [];
+              page.on('console', (message) => {
+                if (message.type() === 'error') consoleErrors.push(message.text());
+              });
+              page.on('pageerror', (error) => pageErrors.push(error.message));
+              page.on('requestfailed', (request) => {
+                const requestUrl = request.url();
+                const errorText = request.failure()?.errorText || '';
+                const expectedCancelledRscNavigation =
+                  requestUrl.startsWith('http://127.0.0.1:4173') &&
+                  requestUrl.includes('_rsc=') &&
+                  errorText.includes('cancelled');
+                if (
+                  requestUrl.startsWith('http://127.0.0.1:4173') &&
+                  !expectedCancelledRscNavigation
+                ) {
+                  failedSameOriginRequests.push(`${request.method()} ${requestUrl} ${errorText}`);
+                }
+              });
+
+              await page.addInitScript(() => {
+                Object.defineProperty(navigator, 'share', {
+                  configurable: true,
+                  value: async (data) => {
+                    window.__cloverSharedCollection = data;
+                  }
+                });
+              });
+              await page.route(/\.mp3(?:\?.*)?$/i, (route) => route.fulfill({
+                status: 200,
+                contentType: 'audio/wav',
+                body: silentWav()
+              }));
+
+              const response = await page.goto(`${routePath}?_vercel_share=temporary-review-token`, {
+                waitUntil: 'domcontentloaded'
+              });
+              expect(response?.ok()).toBeTruthy();
+
+              const routeSlug = routePath === '/' ? 'home' : 'site-rollindd';
+              const introHeading = page.getByRole('heading', { name: 'RollinDD', exact: true });
+              const enterButton = page.getByRole('button', { name: 'Enter the collection' });
+              const shareButton = page.getByRole('button', { name: 'Share collection' });
+              const player = page.getByRole('region', { name: 'Player' });
+
+              await expect(introHeading).toBeVisible();
+              await expect(enterButton).toBeVisible();
+              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
+              await expect(player).toBeHidden();
+
+              const enterBox = await enterButton.boundingBox();
+              const shareBox = await shareButton.boundingBox();
+              expect(enterBox).not.toBeNull();
+              expect(shareBox).not.toBeNull();
+              expect(enterBox.width).toBeGreaterThan(shareBox.width * 1.8);
+
+              await page.screenshot({
+                path: `.clover-webkit-evidence/screenshots/mobile-webkit-${routeSlug}-intro.png`,
+                fullPage: false,
+                animations: 'disabled'
+              });
+
+              await shareButton.click();
+              const sharedUrl = await page.evaluate(() => window.__cloverSharedCollection?.url || '');
+              const parsedShareUrl = new URL(sharedUrl);
+              expect(parsedShareUrl.pathname).toBe(routePath);
+              expect(parsedShareUrl.search).toBe('');
+              expect(parsedShareUrl.hash).toBe('');
+
+              await enterButton.click();
+              await expect(page.getByRole('heading', { name: '7 Productions' })).toBeVisible();
+              await expect(introHeading).toHaveCount(0);
+              await expect(player).toBeHidden();
+
+              await page.screenshot({
+                path: `.clover-webkit-evidence/screenshots/mobile-webkit-${routeSlug}-library-idle.png`,
+                fullPage: false,
+                animations: 'disabled'
+              });
+
+              await page
+                .getByRole('button', { name: 'Play I. The Essence of Fearlessness' })
+                .first()
+                .click();
+              await expect(player).toBeVisible();
+              await page.waitForTimeout(300);
+
+              expect(await player.evaluate((element) => getComputedStyle(element).position)).toBe('fixed');
+              const playerBox = await player.boundingBox();
+              const viewport = page.viewportSize();
+              expect(playerBox).not.toBeNull();
+              expect(viewport).not.toBeNull();
+              expect(playerBox.y).toBeGreaterThanOrEqual(0);
+              expect(playerBox.y + playerBox.height).toBeLessThanOrEqual(viewport.height + 1);
+              expect(playerBox.height).toBeLessThanOrEqual(150);
+
+              const overflow = await page.evaluate(
+                () => document.documentElement.scrollWidth - window.innerWidth
+              );
+              expect(overflow).toBeLessThanOrEqual(1);
+
+              await page.screenshot({
+                path: `.clover-webkit-evidence/screenshots/mobile-webkit-${routeSlug}-player-active.png`,
+                fullPage: false,
+                animations: 'disabled'
+              });
+
+              expect(consoleErrors).toEqual([]);
+              expect(pageErrors).toEqual([]);
+              expect(failedSameOriginRequests).toEqual([]);
+            });
+          }
+          TEST
+
+      - name: Run mobile WebKit journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start -- --hostname 127.0.0.1 --port 4173 > .clover-webkit-evidence/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+
+          node <<'NODE'
+          const url = 'http://127.0.0.1:4173/';
+          for (let attempt = 0; attempt < 90; attempt += 1) {
+            try {
+              const response = await fetch(url, { redirect: 'manual' });
+              if (response.status < 500) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+          process.exit(1);
+          NODE
+
+          npx playwright test --config=.clover-webkit-tests/playwright.config.mjs
+
+      - name: Write non-authorizing WebKit receipt
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p .clover-webkit-evidence
+          node <<'NODE'
+          const fs = require('node:fs');
+          const receipt = {
+            schemaVersion: '1.0',
+            project: 'rollindd-platform',
+            candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
+            validationBranchCommit: process.env.GITHUB_SHA,
+            baseCommit: process.env.CLOVER_BASE_SHA,
+            browserGate: 'mobile-webkit-iphone-14',
+            routes: ['/', '/sites/rollindd'],
+            validationStates: ['intro', 'library-idle', 'player-active'],
+            mode: 'preview-only',
+            productionEligible: false,
+            ownerApprovalRequired: true,
+            boundaries: {
+              mergeAuthorized: false,
+              productionDeploymentAuthorized: false,
+              productionDataAccessAuthorized: false,
+              domainOrDnsChangeAuthorized: false,
+              secretChangeAuthorized: false,
+              externalMessageAuthorized: false,
+              purchaseAuthorized: false
+            }
+          };
+          fs.writeFileSync('.clover-webkit-evidence/receipt.json', `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+
+      - name: Upload bounded WebKit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rollindd-v2-webkit-${{ env.CLOVER_CANDIDATE_SHA }}
+          path: .clover-webkit-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6
