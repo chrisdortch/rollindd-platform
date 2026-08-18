@@ -27,12 +27,13 @@ jobs:
     env:
       CI: '1'
       NEXT_TELEMETRY_DISABLED: '1'
+      CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.CLOVER_CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -40,10 +41,9 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
-          cache: npm
 
-      - name: Install locked application dependencies
-        run: npm ci
+      - name: Install application dependencies and capture the resolved graph
+        run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Run source and production-build gates
         run: |
@@ -61,6 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .clover-preview-tests .clover-preview-evidence/screenshots
+          cp package-lock.json .clover-preview-evidence/resolved-package-lock.json
           cat > .clover-preview-tests/playwright.config.mjs <<'CONFIG'
           import { defineConfig, devices } from '@playwright/test';
 
@@ -189,7 +190,8 @@ jobs:
           const receipt = {
             schemaVersion: '1.0',
             project: 'rollindd-platform',
-            candidateCommit: process.env.GITHUB_SHA,
+            candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
+            workflowCommit: process.env.GITHUB_SHA,
             baseCommit: '6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09',
             mode: 'preview-only',
             productionEligible: false,
@@ -211,7 +213,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rollindd-clean-collection-v2-${{ github.sha }}
+          name: rollindd-clean-collection-v2-${{ env.CLOVER_CANDIDATE_SHA }}
           path: .clover-preview-evidence
           if-no-files-found: error
           include-hidden-files: true
