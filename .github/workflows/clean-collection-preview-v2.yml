@@ -1,15 +1,13 @@
 name: Validate clean collection preview v2
 
 on:
-  push:
-    branches:
-      - 'chatpro/rollindd-clean-collection-v2-preview-20260817'
   pull_request:
     paths:
       - 'app/page.tsx'
       - 'app/sites/[slug]/page.tsx'
       - 'components/CollectionExperience.tsx'
       - 'components/CollectionExperience.module.css'
+      - 'package.json'
       - '.github/workflows/clean-collection-preview-v2.yml'
   workflow_dispatch:
 
@@ -17,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rollindd-clean-v2-${{ github.ref }}
+  group: rollindd-clean-v2-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -28,6 +26,7 @@ jobs:
       CI: '1'
       NEXT_TELEMETRY_DISABLED: '1'
       CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
 
     steps:
       - name: Check out exact candidate
@@ -42,8 +41,73 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install application dependencies and capture the resolved graph
-        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Prove bounded diff and repository cleanliness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .clover-preview-evidence
+          git diff --check "${CLOVER_BASE_SHA}...${CLOVER_CANDIDATE_SHA}"
+          git diff --name-only "${CLOVER_BASE_SHA}...${CLOVER_CANDIDATE_SHA}" | LC_ALL=C sort > .clover-preview-evidence/changed-files.txt
+          node <<'NODE'
+          const fs = require('node:fs');
+          const expected = [
+            '.github/workflows/clean-collection-preview-v2.yml',
+            'app/page.tsx',
+            'app/sites/[slug]/page.tsx',
+            'components/CollectionExperience.module.css',
+            'components/CollectionExperience.tsx',
+            'package.json'
+          ].sort();
+          const actual = fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            console.error(JSON.stringify({ expected, actual }, null, 2));
+            process.exit(1);
+          }
+          fs.writeFileSync(
+            '.clover-preview-evidence/diff-boundary.json',
+            `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
+          );
+          NODE
+
+      - name: Resolve and freeze this validation run's dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
+          cp package-lock.json .clover-preview-evidence/resolved-package-lock.json
+          sha256sum package-lock.json > .clover-preview-evidence/resolved-package-lock.sha256
+          node <<'NODE'
+          const fs = require('node:fs');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const expected = {
+            '@vercel/postgres': '0.10.0',
+            next: '16.3.1',
+            react: '19.2.8',
+            'react-dom': '19.2.8',
+            '@types/node': '26.2.0',
+            '@types/react': '19.2.18',
+            '@types/react-dom': '19.2.4',
+            eslint: '9.39.5',
+            'eslint-config-next': '16.3.1',
+            typescript: '6.0.3'
+          };
+          const actual = {};
+          for (const [name, version] of Object.entries(expected)) {
+            actual[name] = lock.packages?.[`node_modules/${name}`]?.version || null;
+            if (actual[name] !== version) {
+              console.error(`${name}: expected ${version}, observed ${actual[name]}`);
+              process.exit(1);
+            }
+          }
+          fs.writeFileSync(
+            '.clover-preview-evidence/dependency-versions.json',
+            `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
+          );
+          NODE
 
       - name: Run source and production-build gates
         run: |
@@ -61,14 +125,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .clover-preview-tests .clover-preview-evidence/screenshots
-          cp package-lock.json .clover-preview-evidence/resolved-package-lock.json
           cat > .clover-preview-tests/playwright.config.mjs <<'CONFIG'
           import { defineConfig, devices } from '@playwright/test';
 
           export default defineConfig({
             testDir: '.',
             outputDir: '../.clover-preview-evidence/test-results',
-            timeout: 30_000,
+            timeout: 35_000,
             expect: { timeout: 10_000 },
             workers: 1,
             retries: 1,
@@ -98,8 +161,43 @@ jobs:
 
           mkdirSync('.clover-preview-evidence/screenshots', { recursive: true });
 
+          function silentWav() {
+            const sampleRate = 8000;
+            const seconds = 0.35;
+            const dataSize = Math.floor(sampleRate * seconds);
+            const buffer = Buffer.alloc(44 + dataSize);
+            buffer.write('RIFF', 0);
+            buffer.writeUInt32LE(36 + dataSize, 4);
+            buffer.write('WAVE', 8);
+            buffer.write('fmt ', 12);
+            buffer.writeUInt32LE(16, 16);
+            buffer.writeUInt16LE(1, 20);
+            buffer.writeUInt16LE(1, 22);
+            buffer.writeUInt32LE(sampleRate, 24);
+            buffer.writeUInt32LE(sampleRate, 28);
+            buffer.writeUInt16LE(1, 32);
+            buffer.writeUInt16LE(8, 34);
+            buffer.write('data', 36);
+            buffer.writeUInt32LE(dataSize, 40);
+            buffer.fill(128, 44);
+            return buffer;
+          }
+
           for (const routePath of ['/', '/sites/rollindd']) {
             test(`clean collection transition at ${routePath}`, async ({ page }, testInfo) => {
+              const consoleErrors = [];
+              const pageErrors = [];
+              const failedSameOriginRequests = [];
+              page.on('console', (message) => {
+                if (message.type() === 'error') consoleErrors.push(message.text());
+              });
+              page.on('pageerror', (error) => pageErrors.push(error.message));
+              page.on('requestfailed', (request) => {
+                if (request.url().startsWith('http://127.0.0.1:4173')) {
+                  failedSameOriginRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`);
+                }
+              });
+
               await page.addInitScript(() => {
                 Object.defineProperty(navigator, 'share', {
                   configurable: true,
@@ -108,48 +206,93 @@ jobs:
                   }
                 });
               });
-              await page.route(/\.mp3(?:\?.*)?$/i, (route) => route.abort());
+              await page.route(/\.mp3(?:\?.*)?$/i, (route) => route.fulfill({
+                status: 200,
+                contentType: 'audio/wav',
+                body: silentWav()
+              }));
 
               const response = await page.goto(`${routePath}?_vercel_share=temporary-review-token`, {
                 waitUntil: 'domcontentloaded'
               });
               expect(response?.ok()).toBeTruthy();
 
-              await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toBeVisible();
-              await expect(page.getByRole('button', { name: 'Enter the collection' })).toBeVisible();
-              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
-              await expect(page.getByRole('region', { name: 'Player' })).toBeHidden();
+              const routeSlug = routePath === '/' ? 'home' : 'site-rollindd';
+              const projectName = testInfo.project.name;
+              const introHeading = page.getByRole('heading', { name: 'RollinDD', exact: true });
+              const enterButton = page.getByRole('button', { name: 'Enter the collection' });
+              const shareButton = page.getByRole('button', { name: 'Share collection' });
+              const player = page.getByRole('region', { name: 'Player' });
 
-              await page.getByRole('button', { name: 'Share collection' }).click();
+              await expect(introHeading).toBeVisible();
+              await expect(enterButton).toBeVisible();
+              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
+              await expect(player).toBeHidden();
+
+              if (projectName === 'mobile-webkit') {
+                const enterBox = await enterButton.boundingBox();
+                const shareBox = await shareButton.boundingBox();
+                expect(enterBox).not.toBeNull();
+                expect(shareBox).not.toBeNull();
+                expect(enterBox.width).toBeGreaterThan(shareBox.width * 1.8);
+              }
+
+              await page.screenshot({
+                path: `.clover-preview-evidence/screenshots/${projectName}-${routeSlug}-intro.png`,
+                fullPage: false,
+                animations: 'disabled'
+              });
+
+              await shareButton.click();
               const sharedUrl = await page.evaluate(() => window.__cloverSharedCollection?.url || '');
               const parsedShareUrl = new URL(sharedUrl);
               expect(parsedShareUrl.pathname).toBe(routePath);
               expect(parsedShareUrl.search).toBe('');
               expect(parsedShareUrl.hash).toBe('');
 
-              await page.getByRole('button', { name: 'Enter the collection' }).click();
+              await enterButton.click();
               await expect(page.getByRole('heading', { name: '7 Productions' })).toBeVisible();
               await expect(page.getByRole('button', { name: 'Collection intro' })).toBeVisible();
-              await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toHaveCount(0);
-              await expect(page.getByRole('region', { name: 'Player' })).toBeHidden();
+              await expect(introHeading).toHaveCount(0);
+              await expect(player).toBeHidden();
+
+              await page.screenshot({
+                path: `.clover-preview-evidence/screenshots/${projectName}-${routeSlug}-library-idle.png`,
+                fullPage: false,
+                animations: 'disabled'
+              });
 
               await page
                 .getByRole('button', { name: 'Play I. The Essence of Fearlessness' })
                 .first()
                 .click();
-              await expect(page.getByRole('region', { name: 'Player' })).toBeVisible();
+              await expect(player).toBeVisible();
+              await page.waitForTimeout(300);
+
+              const playerBox = await player.boundingBox();
+              const viewport = page.viewportSize();
+              expect(playerBox).not.toBeNull();
+              expect(viewport).not.toBeNull();
+              expect(playerBox.y).toBeGreaterThanOrEqual(0);
+              expect(playerBox.y + playerBox.height).toBeLessThanOrEqual(viewport.height + 1);
+              if (projectName === 'mobile-webkit') {
+                expect(playerBox.height).toBeLessThanOrEqual(150);
+              }
 
               const overflow = await page.evaluate(
                 () => document.documentElement.scrollWidth - window.innerWidth
               );
               expect(overflow).toBeLessThanOrEqual(1);
 
-              const routeSlug = routePath === '/' ? 'home' : 'site-rollindd';
               await page.screenshot({
-                path: `.clover-preview-evidence/screenshots/${testInfo.project.name}-${routeSlug}.png`,
+                path: `.clover-preview-evidence/screenshots/${projectName}-${routeSlug}-player-active.png`,
                 fullPage: false,
                 animations: 'disabled'
               });
+
+              expect(consoleErrors).toEqual([]);
+              expect(pageErrors).toEqual([]);
+              expect(failedSameOriginRequests).toEqual([]);
 
               await page.getByRole('button', { name: 'Collection intro' }).click();
               await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toBeVisible();
@@ -187,12 +330,17 @@ jobs:
           mkdir -p .clover-preview-evidence
           node <<'NODE'
           const fs = require('node:fs');
+          const changedFiles = fs.existsSync('.clover-preview-evidence/changed-files.txt')
+            ? fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean)
+            : [];
           const receipt = {
-            schemaVersion: '1.0',
+            schemaVersion: '1.1',
             project: 'rollindd-platform',
             candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
             workflowCommit: process.env.GITHUB_SHA,
-            baseCommit: '6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09',
+            baseCommit: process.env.CLOVER_BASE_SHA,
+            changedFiles,
+            validationStates: ['intro', 'library-idle', 'player-active'],
             mode: 'preview-only',
             productionEligible: false,
             ownerApprovalRequired: true,
