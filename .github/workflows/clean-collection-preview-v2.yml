@@ -10,6 +10,12 @@ on:
       - 'package.json'
       - '.github/workflows/clean-collection-preview-v2.yml'
   workflow_dispatch:
+    inputs:
+      include_webkit:
+        description: 'Include the slower mobile WebKit release-evidence journey'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -27,6 +33,7 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
       CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
+      CLOVER_INCLUDE_WEBKIT: ${{ github.event_name == 'workflow_dispatch' && inputs.include_webkit || false }}
 
     steps:
       - name: Check out exact candidate
@@ -115,10 +122,16 @@ jobs:
           npm run typecheck
           npm run build
 
-      - name: Install pinned browser-test tooling without changing manifests
+      - name: Install only the browser engines required by this gate
+        shell: bash
         run: |
+          set -euo pipefail
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.62.1
-          npx playwright install --with-deps chromium webkit
+          if [[ "${CLOVER_INCLUDE_WEBKIT}" == "true" ]]; then
+            npx playwright install --with-deps chromium webkit
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: Create bounded interaction tests
         shell: bash
@@ -127,6 +140,14 @@ jobs:
           mkdir -p .clover-preview-tests .clover-preview-evidence/screenshots
           cat > .clover-preview-tests/playwright.config.mjs <<'CONFIG'
           import { defineConfig, devices } from '@playwright/test';
+
+          const projects = [
+            { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
+            { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } }
+          ];
+          if (process.env.CLOVER_INCLUDE_WEBKIT === 'true') {
+            projects.push({ name: 'mobile-webkit', use: { ...devices['iPhone 14'] } });
+          }
 
           export default defineConfig({
             testDir: '.',
@@ -148,10 +169,7 @@ jobs:
               video: 'retain-on-failure',
               screenshot: 'only-on-failure'
             },
-            projects: [
-              { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
-              { name: 'mobile-webkit', use: { ...devices['iPhone 14'] } }
-            ]
+            projects
           });
           CONFIG
 
@@ -219,6 +237,7 @@ jobs:
 
               const routeSlug = routePath === '/' ? 'home' : 'site-rollindd';
               const projectName = testInfo.project.name;
+              const isMobile = projectName.startsWith('mobile-');
               const introHeading = page.getByRole('heading', { name: 'RollinDD', exact: true });
               const enterButton = page.getByRole('button', { name: 'Enter the collection' });
               const shareButton = page.getByRole('button', { name: 'Share collection' });
@@ -229,7 +248,7 @@ jobs:
               await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
               await expect(player).toBeHidden();
 
-              if (projectName === 'mobile-webkit') {
+              if (isMobile) {
                 const enterBox = await enterButton.boundingBox();
                 const shareBox = await shareButton.boundingBox();
                 expect(enterBox).not.toBeNull();
@@ -275,7 +294,7 @@ jobs:
               expect(viewport).not.toBeNull();
               expect(playerBox.y).toBeGreaterThanOrEqual(0);
               expect(playerBox.y + playerBox.height).toBeLessThanOrEqual(viewport.height + 1);
-              if (projectName === 'mobile-webkit') {
+              if (isMobile) {
                 expect(playerBox.height).toBeLessThanOrEqual(150);
               }
 
@@ -301,7 +320,7 @@ jobs:
           }
           TEST
 
-      - name: Run desktop Chromium and mobile WebKit journeys
+      - name: Run browser journeys
         shell: bash
         run: |
           set -euo pipefail
@@ -334,12 +353,16 @@ jobs:
             ? fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean)
             : [];
           const receipt = {
-            schemaVersion: '1.1',
+            schemaVersion: '1.2',
             project: 'rollindd-platform',
             candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
             workflowCommit: process.env.GITHUB_SHA,
             baseCommit: process.env.CLOVER_BASE_SHA,
             changedFiles,
+            browserGate: process.env.CLOVER_INCLUDE_WEBKIT === 'true'
+              ? 'chromium-desktop-mobile-plus-webkit-mobile'
+              : 'chromium-desktop-mobile',
+            fullWebKitIncluded: process.env.CLOVER_INCLUDE_WEBKIT === 'true',
             validationStates: ['intro', 'library-idle', 'player-active'],
             mode: 'preview-only',
             productionEligible: false,
