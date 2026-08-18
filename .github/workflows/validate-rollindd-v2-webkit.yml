@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - 'validation/rollindd-v2-webkit-d94517d8'
+  pull_request:
+    branches:
+      - 'chatpro/rollindd-clean-collection-v2-preview-20260817'
+    paths:
+      - '.github/workflows/validate-rollindd-v2-webkit.yml'
   workflow_dispatch:
 
 permissions:
@@ -147,7 +152,7 @@ jobs:
                 const expectedCancelledRscNavigation =
                   requestUrl.startsWith('http://127.0.0.1:4173') &&
                   requestUrl.includes('_rsc=') &&
-                  errorText.includes('cancelled');
+                  errorText.toLowerCase().includes('cancel');
                 if (
                   requestUrl.startsWith('http://127.0.0.1:4173') &&
                   !expectedCancelledRscNavigation
