@@ -17,14 +17,17 @@ async function copyCollectionUrl(url: string) {
   }
 }
 
-function replaceCollectionLocation(hash: string) {
+function writeCollectionLocation(hash: string, mode: 'push' | 'replace') {
   const nextUrl = new URL(window.location.href);
   nextUrl.hash = hash;
-  window.history.replaceState(
-    null,
-    '',
-    `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
-  );
+  const nextLocation = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+  const state = { cloverCollectionView: hash === 'tracks' ? 'tracks' : 'intro' };
+
+  if (mode === 'push') {
+    window.history.pushState(state, '', nextLocation);
+  } else {
+    window.history.replaceState(state, '', nextLocation);
+  }
 }
 
 export function CollectionExperience({ site }: { site: Site }) {
@@ -46,15 +49,21 @@ export function CollectionExperience({ site }: { site: Site }) {
   } as CSSProperties;
 
   useEffect(() => {
-    const syncWithHash = () => setEntered(window.location.hash === '#tracks');
-    syncWithHash();
-    window.addEventListener('hashchange', syncWithHash);
-    return () => window.removeEventListener('hashchange', syncWithHash);
+    const syncWithLocation = () => setEntered(window.location.hash === '#tracks');
+    syncWithLocation();
+    window.addEventListener('hashchange', syncWithLocation);
+    window.addEventListener('popstate', syncWithLocation);
+    return () => {
+      window.removeEventListener('hashchange', syncWithLocation);
+      window.removeEventListener('popstate', syncWithLocation);
+    };
   }, []);
 
   function enterCollection() {
     setEntered(true);
-    replaceCollectionLocation('tracks');
+    if (window.location.hash !== '#tracks') {
+      writeCollectionLocation('tracks', 'push');
+    }
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -62,7 +71,7 @@ export function CollectionExperience({ site }: { site: Site }) {
 
   function showCollectionIntro() {
     setEntered(false);
-    replaceCollectionLocation('');
+    writeCollectionLocation('', 'replace');
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });

@@ -2,12 +2,14 @@ name: Validate clean collection preview v2
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     paths:
       - 'app/page.tsx'
       - 'app/sites/[slug]/page.tsx'
       - 'components/CollectionExperience.tsx'
       - 'components/CollectionExperience.module.css'
       - 'package.json'
+      - 'scripts/collection-v2-release-audit.mjs'
       - '.github/workflows/clean-collection-preview-v2.yml'
   workflow_dispatch:
     inputs:
@@ -27,13 +29,13 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 55
     env:
       CI: '1'
       NEXT_TELEMETRY_DISABLED: '1'
       CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
-      CLOVER_INCLUDE_WEBKIT: ${{ github.event_name == 'workflow_dispatch' && inputs.include_webkit || false }}
+      CLOVER_INCLUDE_WEBKIT: ${{ (github.event_name == 'workflow_dispatch' && inputs.include_webkit) || (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '<!-- clover:full-webkit -->')) }}
 
     steps:
       - name: Check out exact candidate
@@ -63,7 +65,8 @@ jobs:
             'app/sites/[slug]/page.tsx',
             'components/CollectionExperience.module.css',
             'components/CollectionExperience.tsx',
-            'package.json'
+            'package.json',
+            'scripts/collection-v2-release-audit.mjs'
           ].sort();
           const actual = fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8')
             .split(/\r?\n/)
@@ -122,216 +125,18 @@ jobs:
           npm run typecheck
           npm run build
 
-      - name: Install only the browser engines required by this gate
+      - name: Install pinned browser tooling for the selected evidence tier
         shell: bash
         run: |
           set -euo pipefail
-          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.62.1
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund playwright@1.62.1
           if [[ "${CLOVER_INCLUDE_WEBKIT}" == "true" ]]; then
             npx playwright install --with-deps chromium webkit
           else
             npx playwright install --with-deps chromium
           fi
 
-      - name: Create bounded interaction tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .clover-preview-tests .clover-preview-evidence/screenshots
-          cat > .clover-preview-tests/playwright.config.mjs <<'CONFIG'
-          import { defineConfig, devices } from '@playwright/test';
-
-          const projects = [
-            { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
-            { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } }
-          ];
-          if (process.env.CLOVER_INCLUDE_WEBKIT === 'true') {
-            projects.push({ name: 'mobile-webkit', use: { ...devices['iPhone 14'] } });
-          }
-
-          export default defineConfig({
-            testDir: '.',
-            outputDir: '../.clover-preview-evidence/test-results',
-            timeout: 35_000,
-            expect: { timeout: 10_000 },
-            workers: 1,
-            retries: 1,
-            reporter: [
-              ['list'],
-              ['html', { outputFolder: '../.clover-preview-evidence/playwright-report', open: 'never' }]
-            ],
-            use: {
-              baseURL: 'http://127.0.0.1:4173',
-              locale: 'en-US',
-              timezoneId: 'America/Chicago',
-              reducedMotion: 'reduce',
-              trace: 'retain-on-failure',
-              video: 'retain-on-failure',
-              screenshot: 'only-on-failure'
-            },
-            projects
-          });
-          CONFIG
-
-          cat > .clover-preview-tests/collection-v2.spec.mjs <<'TEST'
-          import { mkdirSync } from 'node:fs';
-          import { test, expect } from '@playwright/test';
-
-          mkdirSync('.clover-preview-evidence/screenshots', { recursive: true });
-
-          function silentWav() {
-            const sampleRate = 8000;
-            const seconds = 0.35;
-            const dataSize = Math.floor(sampleRate * seconds);
-            const buffer = Buffer.alloc(44 + dataSize);
-            buffer.write('RIFF', 0);
-            buffer.writeUInt32LE(36 + dataSize, 4);
-            buffer.write('WAVE', 8);
-            buffer.write('fmt ', 12);
-            buffer.writeUInt32LE(16, 16);
-            buffer.writeUInt16LE(1, 20);
-            buffer.writeUInt16LE(1, 22);
-            buffer.writeUInt32LE(sampleRate, 24);
-            buffer.writeUInt32LE(sampleRate, 28);
-            buffer.writeUInt16LE(1, 32);
-            buffer.writeUInt16LE(8, 34);
-            buffer.write('data', 36);
-            buffer.writeUInt32LE(dataSize, 40);
-            buffer.fill(128, 44);
-            return buffer;
-          }
-
-          for (const routePath of ['/', '/sites/rollindd']) {
-            test(`clean collection transition at ${routePath}`, async ({ page }, testInfo) => {
-              const consoleErrors = [];
-              const pageErrors = [];
-              const failedSameOriginRequests = [];
-              page.on('console', (message) => {
-                if (message.type() === 'error') consoleErrors.push(message.text());
-              });
-              page.on('pageerror', (error) => pageErrors.push(error.message));
-              page.on('requestfailed', (request) => {
-                const requestUrl = request.url();
-                const errorText = request.failure()?.errorText || '';
-                const expectedCancelledRscNavigation =
-                  requestUrl.startsWith('http://127.0.0.1:4173') &&
-                  requestUrl.includes('_rsc=') &&
-                  errorText.includes('ERR_ABORTED');
-                if (
-                  requestUrl.startsWith('http://127.0.0.1:4173') &&
-                  !expectedCancelledRscNavigation
-                ) {
-                  failedSameOriginRequests.push(`${request.method()} ${requestUrl} ${errorText}`);
-                }
-              });
-
-              await page.addInitScript(() => {
-                Object.defineProperty(navigator, 'share', {
-                  configurable: true,
-                  value: async (data) => {
-                    window.__cloverSharedCollection = data;
-                  }
-                });
-              });
-              await page.route(/\.mp3(?:\?.*)?$/i, (route) => route.fulfill({
-                status: 200,
-                contentType: 'audio/wav',
-                body: silentWav()
-              }));
-
-              const response = await page.goto(`${routePath}?_vercel_share=temporary-review-token`, {
-                waitUntil: 'domcontentloaded'
-              });
-              expect(response?.ok()).toBeTruthy();
-
-              const routeSlug = routePath === '/' ? 'home' : 'site-rollindd';
-              const projectName = testInfo.project.name;
-              const isMobile = projectName.startsWith('mobile-');
-              const introHeading = page.getByRole('heading', { name: 'RollinDD', exact: true });
-              const enterButton = page.getByRole('button', { name: 'Enter the collection' });
-              const shareButton = page.getByRole('button', { name: 'Share collection' });
-              const player = page.getByRole('region', { name: 'Player' });
-
-              await expect(introHeading).toBeVisible();
-              await expect(enterButton).toBeVisible();
-              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
-              await expect(player).toBeHidden();
-
-              if (isMobile) {
-                const enterBox = await enterButton.boundingBox();
-                const shareBox = await shareButton.boundingBox();
-                expect(enterBox).not.toBeNull();
-                expect(shareBox).not.toBeNull();
-                expect(enterBox.width).toBeGreaterThan(shareBox.width * 1.8);
-              }
-
-              await page.screenshot({
-                path: `.clover-preview-evidence/screenshots/${projectName}-${routeSlug}-intro.png`,
-                fullPage: false,
-                animations: 'disabled'
-              });
-
-              await shareButton.click();
-              const sharedUrl = await page.evaluate(() => window.__cloverSharedCollection?.url || '');
-              const parsedShareUrl = new URL(sharedUrl);
-              expect(parsedShareUrl.pathname).toBe(routePath);
-              expect(parsedShareUrl.search).toBe('');
-              expect(parsedShareUrl.hash).toBe('');
-
-              await enterButton.click();
-              await expect(page.getByRole('heading', { name: '7 Productions' })).toBeVisible();
-              await expect(page.getByRole('button', { name: 'Collection intro' })).toBeVisible();
-              await expect(introHeading).toHaveCount(0);
-              await expect(player).toBeHidden();
-
-              await page.screenshot({
-                path: `.clover-preview-evidence/screenshots/${projectName}-${routeSlug}-library-idle.png`,
-                fullPage: false,
-                animations: 'disabled'
-              });
-
-              await page
-                .getByRole('button', { name: 'Play I. The Essence of Fearlessness' })
-                .first()
-                .click();
-              await expect(player).toBeVisible();
-              await page.waitForTimeout(300);
-
-              const playerPosition = await player.evaluate((element) => getComputedStyle(element).position);
-              expect(playerPosition).toBe('fixed');
-              const playerBox = await player.boundingBox();
-              const viewport = page.viewportSize();
-              expect(playerBox).not.toBeNull();
-              expect(viewport).not.toBeNull();
-              expect(playerBox.y).toBeGreaterThanOrEqual(0);
-              expect(playerBox.y + playerBox.height).toBeLessThanOrEqual(viewport.height + 1);
-              if (isMobile) {
-                expect(playerBox.height).toBeLessThanOrEqual(150);
-              }
-
-              const overflow = await page.evaluate(
-                () => document.documentElement.scrollWidth - window.innerWidth
-              );
-              expect(overflow).toBeLessThanOrEqual(1);
-
-              await page.screenshot({
-                path: `.clover-preview-evidence/screenshots/${projectName}-${routeSlug}-player-active.png`,
-                fullPage: false,
-                animations: 'disabled'
-              });
-
-              expect(consoleErrors).toEqual([]);
-              expect(pageErrors).toEqual([]);
-              expect(failedSameOriginRequests).toEqual([]);
-
-              await page.getByRole('button', { name: 'Collection intro' }).click();
-              await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toBeVisible();
-              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
-            });
-          }
-          TEST
-
-      - name: Run browser journeys
+      - name: Run deterministic browser and visual-asset audit
         shell: bash
         run: |
           set -euo pipefail
@@ -351,30 +156,52 @@ jobs:
           process.exit(1);
           NODE
 
-          npx playwright test --config=.clover-preview-tests/playwright.config.mjs
+          CLOVER_BASE_URL=http://127.0.0.1:4173 \
+          CLOVER_EVIDENCE_DIR=.clover-preview-evidence \
+          node scripts/collection-v2-release-audit.mjs
 
       - name: Write non-authorizing receipt
         if: always()
         shell: bash
+        env:
+          CLOVER_JOB_STATUS: ${{ job.status }}
         run: |
           mkdir -p .clover-preview-evidence
           node <<'NODE'
           const fs = require('node:fs');
+          const readJson = (file, fallback) => {
+            try {
+              return JSON.parse(fs.readFileSync(file, 'utf8'));
+            } catch {
+              return fallback;
+            }
+          };
           const changedFiles = fs.existsSync('.clover-preview-evidence/changed-files.txt')
             ? fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean)
             : [];
+          const browserAudit = readJson('.clover-preview-evidence/browser-audit.json', { status: 'missing', results: [] });
+          const includeWebKit = process.env.CLOVER_INCLUDE_WEBKIT === 'true';
           const receipt = {
-            schemaVersion: '1.3',
+            schemaVersion: '2.0',
             project: 'rollindd-platform',
             candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
             workflowCommit: process.env.GITHUB_SHA,
             baseCommit: process.env.CLOVER_BASE_SHA,
+            jobStatus: process.env.CLOVER_JOB_STATUS,
             changedFiles,
-            browserGate: process.env.CLOVER_INCLUDE_WEBKIT === 'true'
+            evidenceTier: includeWebKit ? 'release-evidence' : 'fast-preview',
+            browserGate: includeWebKit
               ? 'chromium-desktop-mobile-plus-webkit-mobile'
               : 'chromium-desktop-mobile',
-            fullWebKitIncluded: process.env.CLOVER_INCLUDE_WEBKIT === 'true',
-            validationStates: ['intro', 'library-idle', 'player-active'],
+            fullWebKitIncluded: includeWebKit,
+            visualAssetsVerified: browserAudit.status === 'passed' &&
+              browserAudit.results.length > 0 &&
+              browserAudit.results.every((result) =>
+                result.heroAssets?.images?.every((image) => image.ok)
+              ),
+            browserAuditStatus: browserAudit.status,
+            browserResultCount: browserAudit.results.length,
+            validationStates: ['intro', 'history-back-forward', 'library-idle', 'player-active'],
             expectedNetworkException: 'cancelled Next.js _rsc navigation requests only',
             mode: 'preview-only',
             productionEligible: false,
@@ -403,11 +230,11 @@ jobs:
             .clover-preview-evidence/dependency-versions.json
             .clover-preview-evidence/resolved-package-lock.json
             .clover-preview-evidence/resolved-package-lock.sha256
+            .clover-preview-evidence/browser-audit.json
             .clover-preview-evidence/receipt.json
             .clover-preview-evidence/screenshots
+            .clover-preview-evidence/traces
             .clover-preview-evidence/server.log
-            .clover-preview-evidence/playwright-report
-            .clover-preview-evidence/test-results
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 30
