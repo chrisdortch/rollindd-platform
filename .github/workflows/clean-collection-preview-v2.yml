@@ -1,0 +1,219 @@
+name: Validate clean collection preview v2
+
+on:
+  push:
+    branches:
+      - 'chatpro/rollindd-clean-collection-v2-preview-20260817'
+  pull_request:
+    paths:
+      - 'app/page.tsx'
+      - 'app/sites/[slug]/page.tsx'
+      - 'components/CollectionExperience.tsx'
+      - 'components/CollectionExperience.module.css'
+      - '.github/workflows/clean-collection-preview-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rollindd-clean-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install locked application dependencies
+        run: npm ci
+
+      - name: Run source and production-build gates
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run build
+
+      - name: Install pinned browser-test tooling without changing manifests
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.62.1
+          npx playwright install --with-deps chromium webkit
+
+      - name: Create bounded interaction tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .clover-preview-tests .clover-preview-evidence/screenshots
+          cat > .clover-preview-tests/playwright.config.mjs <<'CONFIG'
+          import { defineConfig, devices } from '@playwright/test';
+
+          export default defineConfig({
+            testDir: '.',
+            outputDir: '../.clover-preview-evidence/test-results',
+            timeout: 30_000,
+            expect: { timeout: 10_000 },
+            workers: 1,
+            retries: 1,
+            reporter: [
+              ['list'],
+              ['html', { outputFolder: '../.clover-preview-evidence/playwright-report', open: 'never' }]
+            ],
+            use: {
+              baseURL: 'http://127.0.0.1:4173',
+              locale: 'en-US',
+              timezoneId: 'America/Chicago',
+              reducedMotion: 'reduce',
+              trace: 'retain-on-failure',
+              video: 'retain-on-failure',
+              screenshot: 'only-on-failure'
+            },
+            projects: [
+              { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
+              { name: 'mobile-webkit', use: { ...devices['iPhone 14'] } }
+            ]
+          });
+          CONFIG
+
+          cat > .clover-preview-tests/collection-v2.spec.mjs <<'TEST'
+          import { mkdirSync } from 'node:fs';
+          import { test, expect } from '@playwright/test';
+
+          mkdirSync('.clover-preview-evidence/screenshots', { recursive: true });
+
+          for (const routePath of ['/', '/sites/rollindd']) {
+            test(`clean collection transition at ${routePath}`, async ({ page }, testInfo) => {
+              await page.addInitScript(() => {
+                Object.defineProperty(navigator, 'share', {
+                  configurable: true,
+                  value: async (data) => {
+                    window.__cloverSharedCollection = data;
+                  }
+                });
+              });
+              await page.route(/\.mp3(?:\?.*)?$/i, (route) => route.abort());
+
+              const response = await page.goto(`${routePath}?_vercel_share=temporary-review-token`, {
+                waitUntil: 'domcontentloaded'
+              });
+              expect(response?.ok()).toBeTruthy();
+
+              await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toBeVisible();
+              await expect(page.getByRole('button', { name: 'Enter the collection' })).toBeVisible();
+              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
+              await expect(page.getByRole('region', { name: 'Player' })).toBeHidden();
+
+              await page.getByRole('button', { name: 'Share collection' }).click();
+              const sharedUrl = await page.evaluate(() => window.__cloverSharedCollection?.url || '');
+              const parsedShareUrl = new URL(sharedUrl);
+              expect(parsedShareUrl.pathname).toBe(routePath);
+              expect(parsedShareUrl.search).toBe('');
+              expect(parsedShareUrl.hash).toBe('');
+
+              await page.getByRole('button', { name: 'Enter the collection' }).click();
+              await expect(page.getByRole('heading', { name: '7 Productions' })).toBeVisible();
+              await expect(page.getByRole('button', { name: 'Collection intro' })).toBeVisible();
+              await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toHaveCount(0);
+              await expect(page.getByRole('region', { name: 'Player' })).toBeHidden();
+
+              await page
+                .getByRole('button', { name: 'Play I. The Essence of Fearlessness' })
+                .first()
+                .click();
+              await expect(page.getByRole('region', { name: 'Player' })).toBeVisible();
+
+              const overflow = await page.evaluate(
+                () => document.documentElement.scrollWidth - window.innerWidth
+              );
+              expect(overflow).toBeLessThanOrEqual(1);
+
+              const routeSlug = routePath === '/' ? 'home' : 'site-rollindd';
+              await page.screenshot({
+                path: `.clover-preview-evidence/screenshots/${testInfo.project.name}-${routeSlug}.png`,
+                fullPage: false,
+                animations: 'disabled'
+              });
+
+              await page.getByRole('button', { name: 'Collection intro' }).click();
+              await expect(page.getByRole('heading', { name: 'RollinDD', exact: true })).toBeVisible();
+              await expect(page.getByRole('heading', { name: '7 Productions' })).toHaveCount(0);
+            });
+          }
+          TEST
+
+      - name: Run desktop Chromium and mobile WebKit journeys
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start -- --hostname 127.0.0.1 --port 4173 > .clover-preview-evidence/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+
+          node <<'NODE'
+          const url = 'http://127.0.0.1:4173/';
+          for (let attempt = 0; attempt < 90; attempt += 1) {
+            try {
+              const response = await fetch(url, { redirect: 'manual' });
+              if (response.status < 500) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+          process.exit(1);
+          NODE
+
+          npx playwright test --config=.clover-preview-tests/playwright.config.mjs
+
+      - name: Write non-authorizing receipt
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p .clover-preview-evidence
+          node <<'NODE'
+          const fs = require('node:fs');
+          const receipt = {
+            schemaVersion: '1.0',
+            project: 'rollindd-platform',
+            candidateCommit: process.env.GITHUB_SHA,
+            baseCommit: '6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09',
+            mode: 'preview-only',
+            productionEligible: false,
+            ownerApprovalRequired: true,
+            boundaries: {
+              mergeAuthorized: false,
+              productionDeploymentAuthorized: false,
+              productionDataAccessAuthorized: false,
+              domainOrDnsChangeAuthorized: false,
+              secretChangeAuthorized: false,
+              externalMessageAuthorized: false,
+              purchaseAuthorized: false
+            }
+          };
+          fs.writeFileSync('.clover-preview-evidence/receipt.json', `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+
+      - name: Upload bounded preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rollindd-clean-collection-v2-${{ github.sha }}
+          path: .clover-preview-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6
