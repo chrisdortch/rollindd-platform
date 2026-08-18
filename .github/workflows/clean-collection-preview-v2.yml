@@ -35,7 +35,6 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
       CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
-      CLOVER_INCLUDE_WEBKIT: ${{ (github.event_name == 'workflow_dispatch' && inputs.include_webkit) || (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '<!-- clover:full-webkit -->')) }}
 
     steps:
       - name: Check out exact candidate
@@ -80,6 +79,37 @@ jobs:
             '.clover-preview-evidence/diff-boundary.json',
             `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
           );
+          NODE
+
+      - name: Select fast-preview or full release-evidence tier
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const body = event.pull_request?.body || '';
+          const dispatchValue = event.inputs?.include_webkit;
+          const includeWebKit =
+            dispatchValue === true ||
+            dispatchValue === 'true' ||
+            body.includes('clover:full-webkit');
+          const selection = {
+            eventName: process.env.GITHUB_EVENT_NAME,
+            includeWebKit,
+            evidenceTier: includeWebKit ? 'release-evidence' : 'fast-preview',
+            selectionSource: body.includes('clover:full-webkit')
+              ? 'pull-request-marker'
+              : dispatchValue === true || dispatchValue === 'true'
+                ? 'workflow-dispatch-input'
+                : 'default-fast-preview'
+          };
+          fs.appendFileSync(process.env.GITHUB_ENV, `CLOVER_INCLUDE_WEBKIT=${includeWebKit}\n`);
+          fs.writeFileSync(
+            '.clover-preview-evidence/evidence-tier.json',
+            `${JSON.stringify(selection, null, 2)}\n`
+          );
+          console.log(JSON.stringify(selection));
           NODE
 
       - name: Resolve and freeze this validation run's dependency graph
@@ -180,20 +210,25 @@ jobs:
             ? fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean)
             : [];
           const browserAudit = readJson('.clover-preview-evidence/browser-audit.json', { status: 'missing', results: [] });
-          const includeWebKit = process.env.CLOVER_INCLUDE_WEBKIT === 'true';
+          const evidenceTier = readJson('.clover-preview-evidence/evidence-tier.json', {
+            includeWebKit: false,
+            evidenceTier: 'unknown',
+            selectionSource: 'missing'
+          });
           const receipt = {
-            schemaVersion: '2.0',
+            schemaVersion: '2.1',
             project: 'rollindd-platform',
             candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
             workflowCommit: process.env.GITHUB_SHA,
             baseCommit: process.env.CLOVER_BASE_SHA,
             jobStatus: process.env.CLOVER_JOB_STATUS,
             changedFiles,
-            evidenceTier: includeWebKit ? 'release-evidence' : 'fast-preview',
-            browserGate: includeWebKit
+            evidenceTier: evidenceTier.evidenceTier,
+            evidenceTierSelectionSource: evidenceTier.selectionSource,
+            browserGate: evidenceTier.includeWebKit
               ? 'chromium-desktop-mobile-plus-webkit-mobile'
               : 'chromium-desktop-mobile',
-            fullWebKitIncluded: includeWebKit,
+            fullWebKitIncluded: evidenceTier.includeWebKit,
             visualAssetsVerified: browserAudit.status === 'passed' &&
               browserAudit.results.length > 0 &&
               browserAudit.results.every((result) =>
@@ -202,7 +237,10 @@ jobs:
             browserAuditStatus: browserAudit.status,
             browserResultCount: browserAudit.results.length,
             validationStates: ['intro', 'history-back-forward', 'library-idle', 'player-active'],
-            expectedNetworkException: 'cancelled Next.js _rsc navigation requests only',
+            expectedNetworkExceptions: [
+              'cancelled Next.js _rsc navigation requests',
+              'cancelled media fetches replaced by deterministic local fixtures'
+            ],
             mode: 'preview-only',
             productionEligible: false,
             ownerApprovalRequired: true,
@@ -227,6 +265,7 @@ jobs:
           path: |
             .clover-preview-evidence/changed-files.txt
             .clover-preview-evidence/diff-boundary.json
+            .clover-preview-evidence/evidence-tier.json
             .clover-preview-evidence/dependency-versions.json
             .clover-preview-evidence/resolved-package-lock.json
             .clover-preview-evidence/resolved-package-lock.sha256

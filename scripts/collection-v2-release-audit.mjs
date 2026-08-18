@@ -32,7 +32,7 @@ if (includeWebKit) {
 }
 
 const audit = {
-  schemaVersion: '1.0',
+  schemaVersion: '1.1',
   status: 'running',
   candidateCommit,
   baseCommit,
@@ -87,7 +87,7 @@ async function runProfile(profile) {
       }
     });
   });
-  await context.route(/\.mp3(?:\?.*)?$/i, (route) =>
+  await context.route(/\.(?:mp3|mp4)(?:\?.*)?$/i, (route) =>
     route.fulfill({ status: 200, contentType: 'audio/wav', body: silentWav() })
   );
 
@@ -131,8 +131,10 @@ async function runRoute(context, profile, routePath) {
       requestUrl.startsWith(baseUrl) &&
       requestUrl.includes('_rsc=') &&
       errorText.includes('ERR_ABORTED');
+    const expectedCancelledMedia =
+      /\.(?:mp3|mp4)(?:\?|$)/i.test(requestUrl) && errorText.includes('ERR_ABORTED');
     const record = `${request.method()} ${requestUrl} ${errorText}`.trim();
-    if (expectedCancelledRscNavigation) {
+    if (expectedCancelledRscNavigation || expectedCancelledMedia) {
       ignoredFailures.push(record);
       audit.ignoredNetworkFailures.push({ profile: profile.name, routePath, record });
     } else {
@@ -347,7 +349,8 @@ async function horizontalOverflow(page) {
 }
 
 function withoutDefaultBrowserType(device) {
-  const { defaultBrowserType: _defaultBrowserType, ...contextOptions } = device;
+  const contextOptions = { ...device };
+  delete contextOptions.defaultBrowserType;
   return contextOptions;
 }
 
