@@ -9,6 +9,7 @@ on:
       - 'components/CollectionExperience.tsx'
       - 'components/CollectionExperience.module.css'
       - 'package.json'
+      - 'package-lock.json'
       - 'scripts/collection-v2-release-audit.mjs'
       - '.github/workflows/clean-collection-preview-v2.yml'
   workflow_dispatch:
@@ -35,6 +36,11 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
       CLOVER_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_BASE_SHA: 6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09
+      CLOVER_RECONCILIATION_BASE_SHA: 8db83f9c526915d2d58385b78da71ff344b18c99
+      CLOVER_EXPECTED_STACK_BASE_REF: chatpro/rollindd-clean-collection-v2-preview-20260817
+      CLOVER_EXPECTED_HEAD_REF: reconciliation/rollindd-pr3-ci-boundary-20260820
+      CLOVER_EVENT_SHA: ${{ github.sha }}
+      CLOVER_WORKFLOW_SHA: ${{ github.workflow_sha }}
 
     steps:
       - name: Check out exact candidate
@@ -49,35 +55,78 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Prove bounded diff and repository cleanliness
+      - name: Prove exact head, bounded reconciliation, and full candidate
         shell: bash
         run: |
           set -euo pipefail
+          test -z "$(git status --porcelain)"
           mkdir -p .clover-preview-evidence
-          git diff --check "${CLOVER_BASE_SHA}...${CLOVER_CANDIDATE_SHA}"
-          git diff --name-only "${CLOVER_BASE_SHA}...${CLOVER_CANDIDATE_SHA}" | LC_ALL=C sort > .clover-preview-evidence/changed-files.txt
+          test "$(git rev-parse HEAD)" = "${CLOVER_CANDIDATE_SHA}"
+          git cat-file -e "${CLOVER_BASE_SHA}^{commit}"
+          git cat-file -e "${CLOVER_RECONCILIATION_BASE_SHA}^{commit}"
+          git merge-base --is-ancestor "${CLOVER_BASE_SHA}" "${CLOVER_RECONCILIATION_BASE_SHA}"
+          git merge-base --is-ancestor "${CLOVER_RECONCILIATION_BASE_SHA}" "${CLOVER_CANDIDATE_SHA}"
+          test "$(git rev-parse "${CLOVER_CANDIDATE_SHA}^")" = "${CLOVER_RECONCILIATION_BASE_SHA}"
+          git diff --check "${CLOVER_RECONCILIATION_BASE_SHA}" "${CLOVER_CANDIDATE_SHA}"
+          git diff --check "${CLOVER_BASE_SHA}" "${CLOVER_CANDIDATE_SHA}"
+          git diff --name-only "${CLOVER_BASE_SHA}" "${CLOVER_CANDIDATE_SHA}" | LC_ALL=C sort > .clover-preview-evidence/changed-files.txt
+          git diff --name-status "${CLOVER_RECONCILIATION_BASE_SHA}" "${CLOVER_CANDIDATE_SHA}" | LC_ALL=C sort > .clover-preview-evidence/reconciliation-delta.txt
           node <<'NODE'
+          const assert = require('node:assert/strict');
           const fs = require('node:fs');
-          const expected = [
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
+            assert.equal(event.pull_request?.head?.sha, process.env.CLOVER_CANDIDATE_SHA);
+            assert.equal(event.pull_request?.head?.ref, process.env.CLOVER_EXPECTED_HEAD_REF);
+            assert.equal(event.pull_request?.base?.sha, process.env.CLOVER_RECONCILIATION_BASE_SHA);
+            assert.equal(event.pull_request?.base?.ref, process.env.CLOVER_EXPECTED_STACK_BASE_REF);
+          }
+          const expectedFullCandidate = [
             '.github/workflows/clean-collection-preview-v2.yml',
             'app/page.tsx',
             'app/sites/[slug]/page.tsx',
             'components/CollectionExperience.module.css',
             'components/CollectionExperience.tsx',
+            'package-lock.json',
             'package.json',
             'scripts/collection-v2-release-audit.mjs'
           ].sort();
-          const actual = fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8')
+          const actualFullCandidate = fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8')
             .split(/\r?\n/)
             .filter(Boolean)
             .sort();
-          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-            console.error(JSON.stringify({ expected, actual }, null, 2));
+          const expectedReconciliationDelta = [
+            'D\t.github/workflows/include-rollindd-lockfile-in-validation.yml',
+            'M\t.github/workflows/clean-collection-preview-v2.yml'
+          ].sort();
+          const actualReconciliationDelta = fs.readFileSync(
+            '.clover-preview-evidence/reconciliation-delta.txt',
+            'utf8'
+          ).split(/\r?\n/).filter(Boolean).sort();
+          if (
+            JSON.stringify(actualFullCandidate) !== JSON.stringify(expectedFullCandidate) ||
+            JSON.stringify(actualReconciliationDelta) !== JSON.stringify(expectedReconciliationDelta)
+          ) {
+            console.error(JSON.stringify({
+              expectedFullCandidate,
+              actualFullCandidate,
+              expectedReconciliationDelta,
+              actualReconciliationDelta
+            }, null, 2));
             process.exit(1);
           }
           fs.writeFileSync(
             '.clover-preview-evidence/diff-boundary.json',
-            `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
+            `${JSON.stringify({
+              status: 'passed',
+              productionBaseCommit: process.env.CLOVER_BASE_SHA,
+              reconciliationBaseCommit: process.env.CLOVER_RECONCILIATION_BASE_SHA,
+              candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
+              expectedFullCandidate,
+              actualFullCandidate,
+              expectedReconciliationDelta,
+              actualReconciliationDelta
+            }, null, 2)}\n`
           );
           NODE
 
@@ -112,16 +161,38 @@ jobs:
           console.log(JSON.stringify(selection));
           NODE
 
-      - name: Resolve and freeze this validation run's dependency graph
+      - name: Install the exact committed dependency graph
         shell: bash
         run: |
           set -euo pipefail
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm ci --ignore-scripts --no-audit --no-fund
-          cp package-lock.json .clover-preview-evidence/resolved-package-lock.json
-          sha256sum package-lock.json > .clover-preview-evidence/resolved-package-lock.sha256
           node <<'NODE'
+          const crypto = require('node:crypto');
           const fs = require('node:fs');
+          const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const inputs = {
+            schemaVersion: '1.0',
+            packageJson: { path: 'package.json', sha256: sha256('package.json') },
+            packageLock: { path: 'package-lock.json', sha256: sha256('package-lock.json') }
+          };
+          fs.writeFileSync(
+            '.clover-preview-evidence/dependency-inputs.json',
+            `${JSON.stringify(inputs, null, 2)}\n`
+          );
+          NODE
+          cp package-lock.json .clover-preview-evidence/committed-package-lock.json
+          sha256sum package-lock.json > .clover-preview-evidence/committed-package-lock.sha256
+          npm ci --ignore-scripts --no-audit --no-fund
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const inputs = JSON.parse(fs.readFileSync('.clover-preview-evidence/dependency-inputs.json', 'utf8'));
+          if (
+            sha256(inputs.packageJson.path) !== inputs.packageJson.sha256 ||
+            sha256(inputs.packageLock.path) !== inputs.packageLock.sha256
+          ) {
+            throw new Error('npm ci changed package.json or package-lock.json');
+          }
           const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
           const expected = {
             '@vercel/postgres': '0.10.0',
@@ -148,12 +219,52 @@ jobs:
             `${JSON.stringify({ status: 'passed', expected, actual }, null, 2)}\n`
           );
           NODE
+          git diff --exit-code -- package.json package-lock.json
 
       - name: Run source and production-build gates
+        shell: bash
         run: |
-          npm run lint
-          npm run typecheck
-          npm run build
+          set -euo pipefail
+          build_root="$(mktemp -d "${RUNNER_TEMP}/rollindd-build.XXXXXX")"
+          export CLOVER_BUILD_ROOT="${build_root}"
+          git archive "${CLOVER_CANDIDATE_SHA}" | tar -x -C "${build_root}"
+          cp -a "${GITHUB_WORKSPACE}/node_modules" "${build_root}/node_modules"
+          printf 'CLOVER_BUILD_ROOT=%s\n' "${build_root}" >> "${GITHUB_ENV}"
+          (
+            cd "${build_root}"
+            npm run lint
+            npm run typecheck
+            npm run build
+          )
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const inputs = JSON.parse(fs.readFileSync('.clover-preview-evidence/dependency-inputs.json', 'utf8'));
+          const buildRoot = process.env.CLOVER_BUILD_ROOT;
+          const observed = {
+            packageJson: sha256(path.join(buildRoot, inputs.packageJson.path)),
+            packageLock: sha256(path.join(buildRoot, inputs.packageLock.path))
+          };
+          if (
+            observed.packageJson !== inputs.packageJson.sha256 ||
+            observed.packageLock !== inputs.packageLock.sha256
+          ) {
+            throw new Error('The isolated build changed package.json or package-lock.json');
+          }
+          fs.writeFileSync(
+            '.clover-preview-evidence/post-build-source.json',
+            `${JSON.stringify({
+              status: 'passed',
+              candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
+              isolatedBuild: true,
+              originalTrackedCheckoutClean: true,
+              observed
+            }, null, 2)}\n`
+          );
+          NODE
+          test -z "$(git status --porcelain --untracked-files=no)"
 
       - name: Install pinned browser tooling for the selected evidence tier
         shell: bash
@@ -170,7 +281,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run start -- --hostname 127.0.0.1 --port 4173 > .clover-preview-evidence/server.log 2>&1 &
+          npm --prefix "${CLOVER_BUILD_ROOT}" run start -- --hostname 127.0.0.1 --port 4173 > .clover-preview-evidence/server.log 2>&1 &
           server_pid=$!
           trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
 
@@ -189,6 +300,76 @@ jobs:
           CLOVER_BASE_URL=http://127.0.0.1:4173 \
           CLOVER_EVIDENCE_DIR=.clover-preview-evidence \
           node scripts/collection-v2-release-audit.mjs
+
+      - name: Re-verify exact source and assemble evidence manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${CLOVER_CANDIDATE_SHA}"
+          git diff --check
+          git diff --exit-code
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const inputs = JSON.parse(fs.readFileSync('.clover-preview-evidence/dependency-inputs.json', 'utf8'));
+          if (
+            sha256(inputs.packageJson.path) !== inputs.packageJson.sha256 ||
+            sha256(inputs.packageLock.path) !== inputs.packageLock.sha256
+          ) {
+            throw new Error('package.json or package-lock.json changed during validation');
+          }
+          const roots = [
+            'changed-files.txt',
+            'reconciliation-delta.txt',
+            'diff-boundary.json',
+            'evidence-tier.json',
+            'dependency-inputs.json',
+            'dependency-versions.json',
+            'committed-package-lock.json',
+            'committed-package-lock.sha256',
+            'post-build-source.json',
+            'browser-audit.json',
+            'screenshots',
+            'traces',
+            'server.log'
+          ];
+          const files = [];
+          const visit = (relativePath) => {
+            const absolutePath = path.join('.clover-preview-evidence', relativePath);
+            if (!fs.existsSync(absolutePath)) return;
+            const stat = fs.statSync(absolutePath);
+            if (stat.isDirectory()) {
+              for (const child of fs.readdirSync(absolutePath).sort()) {
+                visit(path.join(relativePath, child));
+              }
+              return;
+            }
+            files.push({ path: relativePath.split(path.sep).join('/'), size: stat.size, sha256: sha256(absolutePath) });
+          };
+          roots.forEach(visit);
+          const browserAudit = JSON.parse(fs.readFileSync('.clover-preview-evidence/browser-audit.json', 'utf8'));
+          if (
+            browserAudit.status !== 'passed' ||
+            browserAudit.includeWebKit !== true ||
+            browserAudit.results.length !== 6
+          ) {
+            throw new Error('Release evidence requires a passed six-result Chromium/WebKit browser audit');
+          }
+          const manifest = {
+            schemaVersion: '1.0',
+            project: 'rollindd-platform',
+            candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
+            reconciliationBaseCommit: process.env.CLOVER_RECONCILIATION_BASE_SHA,
+            productionBaseCommit: process.env.CLOVER_BASE_SHA,
+            files
+          };
+          fs.writeFileSync(
+            '.clover-preview-evidence/evidence-manifest.json',
+            `${JSON.stringify(manifest, null, 2)}\n`
+          );
+          NODE
 
       - name: Write non-authorizing receipt
         if: always()
@@ -210,6 +391,7 @@ jobs:
             ? fs.readFileSync('.clover-preview-evidence/changed-files.txt', 'utf8').split(/\r?\n/).filter(Boolean)
             : [];
           const browserAudit = readJson('.clover-preview-evidence/browser-audit.json', { status: 'missing', results: [] });
+          const evidenceManifest = readJson('.clover-preview-evidence/evidence-manifest.json', { files: [] });
           const evidenceTier = readJson('.clover-preview-evidence/evidence-tier.json', {
             includeWebKit: false,
             evidenceTier: 'unknown',
@@ -219,8 +401,13 @@ jobs:
             schemaVersion: '2.1',
             project: 'rollindd-platform',
             candidateCommit: process.env.CLOVER_CANDIDATE_SHA,
-            workflowCommit: process.env.GITHUB_SHA,
-            baseCommit: process.env.CLOVER_BASE_SHA,
+            workflowSourceCommit: process.env.CLOVER_CANDIDATE_SHA,
+            reconciliationBaseCommit: process.env.CLOVER_RECONCILIATION_BASE_SHA,
+            productionBaseCommit: process.env.CLOVER_BASE_SHA,
+            eventMergeCommit: process.env.CLOVER_EVENT_SHA,
+            workflowDefinitionCommit: process.env.CLOVER_WORKFLOW_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT || '0'),
             jobStatus: process.env.CLOVER_JOB_STATUS,
             changedFiles,
             evidenceTier: evidenceTier.evidenceTier,
@@ -236,6 +423,12 @@ jobs:
               ),
             browserAuditStatus: browserAudit.status,
             browserResultCount: browserAudit.results.length,
+            evidenceManifestFileCount: evidenceManifest.files.length,
+            evidenceManifestSha256: fs.existsSync('.clover-preview-evidence/evidence-manifest.json')
+              ? require('node:crypto').createHash('sha256')
+                .update(fs.readFileSync('.clover-preview-evidence/evidence-manifest.json'))
+                .digest('hex')
+              : null,
             validationStates: ['intro', 'history-back-forward', 'library-idle', 'player-active'],
             expectedNetworkExceptions: [
               'cancelled Next.js _rsc navigation requests',
@@ -256,6 +449,7 @@ jobs:
           };
           fs.writeFileSync('.clover-preview-evidence/receipt.json', `${JSON.stringify(receipt, null, 2)}\n`);
           NODE
+          sha256sum .clover-preview-evidence/receipt.json > .clover-preview-evidence/receipt.sha256
 
       - name: Upload bounded preview evidence
         if: always()
@@ -264,13 +458,18 @@ jobs:
           name: rollindd-clean-collection-v2-${{ env.CLOVER_CANDIDATE_SHA }}
           path: |
             .clover-preview-evidence/changed-files.txt
+            .clover-preview-evidence/reconciliation-delta.txt
             .clover-preview-evidence/diff-boundary.json
             .clover-preview-evidence/evidence-tier.json
+            .clover-preview-evidence/dependency-inputs.json
             .clover-preview-evidence/dependency-versions.json
-            .clover-preview-evidence/resolved-package-lock.json
-            .clover-preview-evidence/resolved-package-lock.sha256
+            .clover-preview-evidence/committed-package-lock.json
+            .clover-preview-evidence/committed-package-lock.sha256
+            .clover-preview-evidence/post-build-source.json
             .clover-preview-evidence/browser-audit.json
+            .clover-preview-evidence/evidence-manifest.json
             .clover-preview-evidence/receipt.json
+            .clover-preview-evidence/receipt.sha256
             .clover-preview-evidence/screenshots
             .clover-preview-evidence/traces
             .clover-preview-evidence/server.log
